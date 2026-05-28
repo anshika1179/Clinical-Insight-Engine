@@ -2,6 +2,7 @@ import crypto from "crypto";
 import express, { type Request, Response, NextFunction } from "express";
 import helmet from "helmet";
 import session from "express-session";
+import crypto from "crypto";
 import createMemoryStore from "memorystore";
 import { DatabaseStartupError, verifyDatabaseConnection, closePool } from "./db";
 import { registerRoutes } from "./routes";
