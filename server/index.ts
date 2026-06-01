@@ -6,9 +6,11 @@ import connectPgSimple from "connect-pg-simple";
 import { DatabaseStartupError, verifyDatabaseConnection, closePool, getPool } from "./db";
 import { registerRoutes } from "./routes";
 import { createAuthRouter } from "./auth";
+import patientsRouter from "./routes/patients";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { sanitizeDatabaseError } from "./security/sqlProtection";
+import { getJwtSecret } from "./services/auth/tokenValidator";
 
 const app = express();
 const httpServer = createServer(app);
@@ -165,6 +167,12 @@ app.use((req, res, next) => {
 
   // Register auth routes BEFORE API routes so session is available
   app.use("/api/auth", createAuthRouter());
+
+  // Fail fast on startup if JWT_SECRET is misconfigured (in production)
+  getJwtSecret();
+
+  // Register protected patient endpoints
+  app.use("/api/patients", patientsRouter);
 
   await registerRoutes(httpServer, app);
 

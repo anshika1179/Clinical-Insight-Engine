@@ -15,6 +15,7 @@ import { fileURLToPath } from "url";
 import { rateLimit } from "express-rate-limit";
 import { searchQuerySchema } from "./validation/searchValidation";
 import { analyzeSearchInput, logSecurityEvent, sanitizeDatabaseError } from "./security/sqlProtection";
+import { issueToken } from "./services/auth/tokenValidator";
 
 const execFileAsync = promisify(execFile);
 
@@ -186,6 +187,18 @@ export async function registerRoutes(
   if (process.env.NODE_ENV !== "production") {
     seedDatabase().catch(console.error);
   }
+
+  // Issue a JWT token for the currently authenticated session user
+  app.get("/api/auth/token", requireAuth, requireVerified, (req, res) => {
+    // Session is guaranteed by requireAuth
+    const user = req.session.user;
+    if (!user || !user.id || !user.email) {
+      return res.status(401).json({ message: "Invalid session user data" });
+    }
+
+    const token = issueToken(user.id, user.email, "provider");
+    res.json({ token });
+  });
 
   app.post(
     api.assessments.preview.path,
