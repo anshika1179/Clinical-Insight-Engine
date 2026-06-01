@@ -72,6 +72,7 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+app.use(loggingAnomalyMiddleware);
 
 // Nonce middleware - generates a unique cryptographic nonce per request for CSP
 app.use((_req, res, next) => {
@@ -80,6 +81,16 @@ app.use((_req, res, next) => {
 });
 
 // Security headers via helmet
+const scriptSrcDirective: Array<string | ((req: any, res: any) => string)> = [
+  "'self'",
+  (_req: any, res: any) => `'nonce-${res.locals.cspNonce}'`
+];
+
+// Vite HMR requires eval in development mode
+if (process.env.NODE_ENV !== "production") {
+  scriptSrcDirective.push("'unsafe-eval'");
+}
+
 app.use(
   helmet({
     contentSecurityPolicy: {
