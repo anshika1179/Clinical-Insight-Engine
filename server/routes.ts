@@ -22,6 +22,31 @@ import { issueToken } from "./services/auth/tokenValidator";
 
 export const execFileAsync = promisify(execFile);
 
+function runPythonInference(
+  executable: string,
+  args: string[],
+  inputData: any,
+  timeoutMs: number = 30000
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(executable, args, { timeout: timeoutMs }, (error, stdout, stderr) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve({ stdout, stderr });
+      }
+    });
+
+    if (child.stdin) {
+      child.stdin.on("error", (err) => {
+        console.error("Stdin write error:", err);
+      });
+      child.stdin.write(JSON.stringify(inputData));
+      child.stdin.end();
+    }
+  });
+}
+
 /**
  * Tracks currently running inference requests to prevent
  * duplicate concurrent ML execution for identical payloads.
@@ -316,7 +341,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       let requestFingerprint: string | null = null;
-      let tempFile: string | null = null;
 
       try {
         const input = api.assessments.create.input.parse(req.body);

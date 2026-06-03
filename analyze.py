@@ -494,8 +494,11 @@ cache.set(input_data, result)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "predict_file":
-        with open(sys.argv[2], 'r') as f:
-            data = json.load(f)
+        if len(sys.argv) > 2:
+            with open(sys.argv[2], 'r') as f:
+                data = json.load(f)
+        else:
+            data = json.load(sys.stdin)
         model, scaler, features, cov_beta = get_model()
         result = interpret_prediction(model, scaler, features, data, cov_beta)
         print(json.dumps(result))
