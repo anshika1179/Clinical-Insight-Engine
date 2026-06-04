@@ -55,6 +55,43 @@ function runPythonInference(
   });
 }
 
+export class SimpleSemaphore {
+  private activeCount = 0;
+  private queue: (() => void)[] = [];
+
+  constructor(private maxConcurrency: number) {}
+
+  async acquire(): Promise<void> {
+    if (this.activeCount < this.maxConcurrency) {
+      this.activeCount++;
+      return;
+    }
+    return new Promise<void>((resolve) => {
+      this.queue.push(resolve);
+    });
+  }
+
+  release(): void {
+    if (this.queue.length > 0) {
+      const next = this.queue.shift();
+      if (next) next();
+    } else {
+      this.activeCount--;
+    }
+  }
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    await this.acquire();
+    try {
+      return await fn();
+    } finally {
+      this.release();
+    }
+  }
+}
+
+const inferenceConcurrencyLimiter = new SimpleSemaphore(4);
+
 /**
  * Tracks currently running inference requests to prevent
  * duplicate concurrent ML execution for identical payloads.
@@ -571,8 +608,21 @@ export async function registerRoutes(
     }
   );
 
-  app.get(
-    api.assessments.list.path,
+  app.get(api.assessments.list.path, requireAuth, requireVerified, async (req, res) => {
+    try {
+      const userEmail = req.session.user?.email;
+      const assessments = await storage.getAssessments(50, 0, userEmail);
+
+      res.json(assessments);
+
+    } catch (err) {
+      res.status(500).json({
+        message: "Failed to fetch assessments"
+      });
+    }
+  });
+    app.get(
+    "/api/assessments/export.csv",
     requireAuth,
     requireVerified,
     async (req, res) => {
@@ -592,6 +642,39 @@ export async function registerRoutes(
     }
   );
 
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader(
+          "Content-Disposition",
+          "attachment; filename=assessments.csv"
+        );
+        return res.send(csv);
+      } catch (err) {
+        console.error("CSV export error:", err);
+        return res.status(500).json({ message: "Failed to export CSV." });
+      }
+    }
+  );
+
+  /**
+   * GET /api/assessments/search
+   *
+   * Secure patient/assessment search endpoint.
+   *
+   * Security controls:
+   * 1. PRIMARY: Drizzle ORM ilike()/eq() — query parameters are bound placeholders,
+   *    never interpolated into raw SQL strings.  This prevents SQL injection.
+   * 2. SUPPLEMENTARY: Zod schema validates input length, character set, and rejects
+   *    known injection signatures before the query is even constructed.
+   * 3. Security logging: suspicious patterns are logged (without PHI) for audit.
+   * 4. User scoping: results are always filtered to the authenticated user's records.
+   * 5. Generic errors: DB errors are sanitized — no table names or SQL syntax leaked.
+   *
+   * Query params:
+   *   q            - search term (max 200 chars, safe characters only)
+   *   riskCategory - optional: LOW | MODERATE | HIGH
+   *   page         - page number (default 1)
+   *   limit        - results per page, max 100 (default 20)
+   */
   app.get(
     "/api/assessments/search",
     requireAuth,
