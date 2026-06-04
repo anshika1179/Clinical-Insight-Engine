@@ -8,6 +8,8 @@ import NotFound from "@/pages/not-found";
 import Landing from "./pages/Landing";
 import Dashboard from "./pages/Dashboard";
 import History from "./pages/History";
+import Analytics from "./pages/Analytics";
+import ImportData from "./pages/ImportData";
 import AdminDashboard from "./pages/AdminDashboard";
 import Analytics from "./pages/Analytics";
 import LoginPage from "./pages/LoginPage";
@@ -29,6 +31,11 @@ function Router() {
       <Route path="/analytics">
         <ProtectedRoute>
           <Analytics />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/import">
+        <ProtectedRoute>
+          <ImportData />
         </ProtectedRoute>
       </Route>
       <Route path="/history">

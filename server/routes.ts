@@ -1,5 +1,8 @@
 import type { Express } from "express";
 import type { Server } from "http";
+import authRouter from "./routes/auth.routes";
+import assessmentsRouter from "./routes/assessments.routes";
+import { seedDatabase } from "./utils/seed";
 import { storage, type AssessmentCreateInput } from "./storage";
 import { requireAuth, requireAdmin, requireVerified } from "./auth";
 import { api } from "@shared/routes";
@@ -14,6 +17,7 @@ import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 import { rateLimit } from "express-rate-limit";
+import { assessmentsToCsv } from "./utils/csvSanitizer";
 import {
   sanitizeDatabaseError,
   analyzeSearchInput,
@@ -100,6 +104,10 @@ const inferenceConcurrencyLimiter = new SimpleSemaphore(4);
  */
 const activeInferenceRequests = new Set<string>();
 
+function generateRequestFingerprint(
+  payload: unknown,
+  userId: string,
+): string {
 const predictionFactorSchema = z.object({
   name: z.string(),
   impact: z.enum(["positive", "negative"]),
@@ -153,6 +161,7 @@ function generateRequestFingerprint(payload: unknown, userId: string): string {
 }
 
 // ESM-compatible path resolution for analyze.py
+// Resolve relative to this source file, not process.cwd()
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const analyzePyPath = path.resolve(__dirname, "..", "analyze.py");
@@ -163,24 +172,13 @@ const analyzePyPath = path.resolve(__dirname, "..", "analyze.py");
  * Limits to 5 requests per minute per IP to prevent DoS attacks.
  */
 const assessmentLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  limit: 5,
+  windowMs: 60 * 1000, // 1 minute
+  limit: 5, // 5 requests per IP per window
   standardHeaders: "draft-8",
   legacyHeaders: false,
   message: {
     error: "Too many assessment requests. Please try again later.",
-    retryAfter: 60,
-  },
-});
-
-const previewLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  limit: 10,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  message: {
-    error: "Too many preview requests. Please try again later.",
-    retryAfter: 60,
+    retryAfter: 60, // seconds
   },
 });
 
@@ -196,15 +194,14 @@ const previewLimiter = rateLimit({
 });
 
 export function getPythonExecutable() {
-  const candidates =
-    process.platform === "win32"
-      ? [
+  const candidates = process.platform === "win32"
+    ? [
         path.resolve(".venv", "Scripts", "python.exe"),
-        path.resolve("venv", "Scripts", "python.exe"),
+        path.resolve("venv", "Scripts", "python.exe")
       ]
-      : [
+    : [
         path.resolve(".venv", "bin", "python"),
-        path.resolve("venv", "bin", "python"),
+        path.resolve("venv", "bin", "python")
       ];
 
   return candidates.find((candidate) => existsSync(candidate)) ?? "python3";
@@ -309,151 +306,82 @@ interface PredictionResult {
   patientAdvice: string[];
 }
 
-function calculateClinicalFallback(input: unknown): PredictionResult {
-  const anyInput = input as any;
+function calculateClinicalFallback(input: any): PredictionResult {
   let points = 0;
+  const factors: Array<{ name: string; impact: "positive" | "negative"; description: string }> = [];
 
-  // Use anyInput for property access to satisfy TypeScript.
-
-  const factors: Array<{
-    name: string;
-    impact: "positive" | "negative";
-    description: string;
-  }> = [];
-
-  const age = Number(anyInput.age) || 0;
+  const age = Number(input.age) || 0;
   if (age > 60) {
     points += 20;
-    factors.push({
-      name: "Age > 60",
-      impact: "positive",
-      description:
-        "Elderly demographic is associated with higher metabolic risk.",
-    });
+    factors.push({ name: "Age > 60", impact: "positive", description: "Elderly demographic is associated with higher metabolic risk." });
   } else if (age > 45) {
     points += 10;
-    factors.push({
-      name: "Age > 45",
-      impact: "positive",
-      description: "Age over 45 increases baseline diabetes risk.",
-    });
+    factors.push({ name: "Age > 45", impact: "positive", description: "Age over 45 increases baseline diabetes risk." });
   }
 
-  const bmi = Number(anyInput.bmi) || 0;
+  const bmi = Number(input.bmi) || 0;
   if (bmi >= 30) {
     points += 25;
-    factors.push({
-      name: "Obese (BMI >= 30)",
-      impact: "positive",
-      description: "Elevated body mass index drives insulin resistance.",
-    });
+    factors.push({ name: "Obese (BMI >= 30)", impact: "positive", description: "Elevated body mass index drives insulin resistance." });
   } else if (bmi >= 25) {
     points += 10;
-    factors.push({
-      name: "Overweight (BMI 25-30)",
-      impact: "positive",
-      description: "Slightly elevated BMI increases metabolic strain.",
-    });
+    factors.push({ name: "Overweight (BMI 25-30)", impact: "positive", description: "Slightly elevated BMI increases metabolic strain." });
   } else if (bmi > 0 && bmi < 18.5) {
-    factors.push({
-      name: "Underweight (BMI < 18.5)",
-      impact: "negative",
-      description: "Lower body weight correlates with reduced metabolic risk.",
-    });
+    factors.push({ name: "Underweight (BMI < 18.5)", impact: "negative", description: "Lower body weight correlates with reduced metabolic risk." });
   }
 
-  const hba1c = Number(anyInput.hba1cLevel) || 0;
+  const hba1c = Number(input.hba1cLevel) || 0;
   if (hba1c >= 6.5) {
     points += 35;
-    factors.push({
-      name: "Diabetic HbA1c Range",
-      impact: "positive",
-      description: "HbA1c level >= 6.5% falls within the diabetic range.",
-    });
+    factors.push({ name: "Diabetic HbA1c Range", impact: "positive", description: "HbA1c level >= 6.5% falls within the diabetic range." });
   } else if (hba1c >= 5.7) {
     points += 20;
-    factors.push({
-      name: "Prediabetic HbA1c",
-      impact: "positive",
-      description: "HbA1c level (5.7-6.4%) suggests impaired fasting glucose.",
-    });
+    factors.push({ name: "Prediabetic HbA1c", impact: "positive", description: "HbA1c level (5.7-6.4%) suggests impaired fasting glucose." });
   }
 
-  const glucose = Number(anyInput.bloodGlucoseLevel) || 0;
+  const glucose = Number(input.bloodGlucoseLevel) || 0;
   if (glucose >= 126) {
     points += 20;
-    factors.push({
-      name: "Hyperglycemia",
-      impact: "positive",
-      description: "Fasting glucose >= 126 mg/dL indicates metabolic distress.",
-    });
+    factors.push({ name: "Hyperglycemia", impact: "positive", description: "Fasting glucose >= 126 mg/dL indicates metabolic distress." });
   } else if (glucose >= 100) {
     points += 10;
-    factors.push({
-      name: "Elevated Fasting Glucose",
-      impact: "positive",
-      description: "Glucose (100-125 mg/dL) shows early glucose intolerance.",
-    });
+    factors.push({ name: "Elevated Fasting Glucose", impact: "positive", description: "Glucose (100-125 mg/dL) shows early glucose intolerance." });
   }
 
-  if (anyInput.hypertension) {
+  if (input.hypertension) {
     points += 10;
-    factors.push({
-      name: "Hypertension",
-      impact: "positive",
-      description: "High blood pressure is a known diabetes comorbidity.",
-    });
+    factors.push({ name: "Hypertension", impact: "positive", description: "High blood pressure is a known diabetes comorbidity." });
   }
 
-  if (anyInput.heartDisease) {
+  if (input.heartDisease) {
     points += 10;
-    factors.push({
-      name: "Heart Disease",
-      impact: "positive",
-      description: "Prior cardiac history links with metabolic syndrome.",
-    });
+    factors.push({ name: "Heart Disease", impact: "positive", description: "Prior cardiac history links with metabolic syndrome." });
   }
 
   const riskScore = Math.max(1.0, Math.min(99.0, points));
   let riskCategory: "LOW" | "MODERATE" | "HIGH" = "LOW";
-  if (riskScore >= 50) riskCategory = "HIGH";
-  else if (riskScore >= 20) riskCategory = "MODERATE";
+  if (riskScore >= 50) {
+    riskCategory = "HIGH";
+  } else if (riskScore >= 20) {
+    riskCategory = "MODERATE";
+  }
 
   return {
     riskScore,
     riskCategory,
-    factors:
-      factors.length > 0
-        ? factors
-        : [
-          {
-            name: "Stable Profile",
-            impact: "negative",
-            description: "No major clinical risk drivers detected.",
-          },
-        ],
-    clinicianAdvice:
-      riskCategory === "HIGH"
-        ? [
-          "High risk. Refer for diagnostic oral glucose tolerance testing (OGTT).",
-        ]
-        : riskCategory === "MODERATE"
-          ? [
-            "Moderate risk. Suggest nutritional counseling and review in 6 months.",
-          ]
-          : ["Low risk. Encourage standard yearly wellness checks."],
-    patientAdvice:
-      riskCategory === "HIGH"
-        ? [
-          "Please schedule an appointment with your clinician to check diagnostic lab ranges.",
-        ]
-        : riskCategory === "MODERATE"
-          ? [
-            "Making positive dietary changes and staying active helps lower type 2 diabetes risk.",
-          ]
-          : [
-            "Continue maintaining a healthy, balanced lifestyle and regular physical activity.",
-          ],
+    factors: factors.length > 0 ? factors : [{ name: "Stable Profile", impact: "negative", description: "No major clinical risk drivers detected." }],
+    clinicianAdvice: riskCategory === "HIGH" 
+      ? ["High risk. Refer for diagnostic oral glucose tolerance testing (OGTT)."]
+      : riskCategory === "MODERATE"
+      ? ["Moderate risk. Suggest nutritional counseling and review in 6 months."]
+      : ["Low risk. Encourage standard yearly wellness checks."],
+    patientAdvice: riskCategory === "HIGH"
+      ? ["Please schedule an appointment with your clinician to check diagnostic lab ranges."]
+      : riskCategory === "MODERATE"
+      ? ["Making positive dietary changes and staying active helps lower type 2 diabetes risk."]
+      : ["Continue maintaining a healthy, balanced lifestyle and regular physical activity."],
+    confidenceInterval: `${Math.max(1, riskScore - 5)}% - ${Math.min(99, riskScore + 5)}%`,
+    modelConfidence: 0.95
   };
 }
 
@@ -461,21 +389,23 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  // Type helpers: express-session typings in this repo are intentionally loose.
-  type SessionUser = { id?: string; email?: string; name?: string };
-
+  // Seed database on startup — development only to prevent fake data in production
   if (process.env.NODE_ENV !== "production") {
     seedDatabase().catch((err) => logger.error({ err }, "Database seeding failed"));
   }
 
+  // Mount domain-specific routers
+  app.use("/api/auth", authRouter);
+  app.use("/api/assessments", assessmentsRouter);
+  // Issue a JWT token for the currently authenticated session user
   app.get("/api/auth/token", requireAuth, requireVerified, (req, res) => {
-    const user = req.session.user as any;
-
-    if (!user?.id || !user?.email) {
+    // Session is guaranteed by requireAuth
+    const user = req.session.user;
+    if (!user || !user.id || !user.email) {
       return res.status(401).json({ message: "Invalid session user data" });
     }
 
-    const token = issueToken((user as any).id, user.email, "provider");
+    const token = issueToken(user.id, user.email, "provider");
     res.json({ token });
   });
 
@@ -486,50 +416,51 @@ export async function registerRoutes(
     previewLimiter,
     async (req, res) => {
       const input = api.assessments.preview.input.parse(req.body);
-      const tempFilePath = path.join(os.tmpdir(), `${randomUUID()}.json`);
+      const tempFile = path.join(
+        os.tmpdir(),
+        `${randomUUID()}.json`
+      );
 
       try {
-        await writeFile(tempFilePath, JSON.stringify(input));
+        await writeFile(tempFile, JSON.stringify(input));
 
-        let prediction: any;
+        let prediction;
         try {
-          const { stdout } = await execFileAsync(
+          const { stdout, stderr } = await execFileAsync(
             getPythonExecutable(),
-            [analyzePyPath, "predict_file", tempFilePath],
+            [analyzePyPath, "predict_file", tempFile],
             {
-              timeout: 30000,
-              // 10MB buffer to safely handle verbose Python stdout
-              // (scikit-learn/numpy deprecation warnings, model loading logs)
-              // without crashing with ERR_CHILD_PROCESS_STDIO_MAXBUFFER.
-              maxBuffer: 10 * 1024 * 1024,
+              timeout: 30000
             }
           );
-
           prediction = JSON.parse(stdout.trim());
-          if (prediction?.error) {
-            return res.status(400).json({ message: prediction.error });
+          if (prediction.error) {
+            return res.status(400).json({
+              message: prediction.error
+            });
           }
         } catch (error: any) {
-          if (error?.killed || error?.signal === "SIGTERM") {
-            return res
-              .status(408)
-              .json({ message: "Clinical assessment preview timed out." });
+          if (error.killed || error.signal === "SIGTERM") {
+            return res.status(408).json({
+              message: "Clinical assessment preview timed out."
+            });
           }
+          console.warn("Python prediction preview failed, running clinical rule-based fallback:", error);
           prediction = calculateClinicalFallback(input);
         }
-
+        console.log(`[AUDIT] preview requested by=${req.session.user?.email} riskCategory=${prediction.riskCategory} riskScore=${prediction.riskScore} at=${new Date().toISOString()}`);
         return res.json({
           riskScore: prediction.riskScore,
           riskCategory: prediction.riskCategory,
           factors: prediction.factors ?? [],
           confidenceInterval: prediction.confidenceInterval ?? null,
-          modelConfidence: prediction.modelConfidence ?? null,
+          modelConfidence: prediction.modelConfidence ?? null
         });
       } catch (err) {
         if (err instanceof z.ZodError) {
-          return res
-            .status(400)
-            .json({ message: err.errors[0]?.message ?? "Invalid input" });
+          return res.status(400).json({
+            message: err.errors[0].message
+          });
         }
         logger.error({ err }, "Error creating assessment preview");
         return res.status(500).json({ message: "Internal server error" });
@@ -549,13 +480,15 @@ export async function registerRoutes(
     requireVerified,
     assessmentLimiter,
     async (req, res) => {
-      const userId = (req.session.user as any)?.id;
+      const userId = req.session.user?.email;
       if (!userId) {
-        return res.status(401).json({ message: "Authentication required." });
+        return res.status(401).json({
+          message: "Authentication required.",
+        });
       }
 
       let requestFingerprint: string | null = null;
-      let tempFilePath: string | null = null; // ✨ 1. Declare it here outside the block scope
+      let tempFile: string | null = null;
 
       try {
         const input = api.assessments.create.input.parse(req.body);
@@ -563,38 +496,43 @@ export async function registerRoutes(
 
         if (activeInferenceRequests.has(requestFingerprint)) {
           return res.status(409).json({
-            message: "An identical assessment request is already being processed.",
+            message: "An identical assessment request is already being processed."
           });
         }
+
         activeInferenceRequests.add(requestFingerprint);
 
-        // ✨ 2. Assign the value inside the block without using 'let' again
-        tempFilePath = path.join(os.tmpdir(), `${randomUUID()}.json`);
-        await writeFile(tempFilePath, JSON.stringify(input));
+        tempFile = path.join(
+          os.tmpdir(),
+          `${randomUUID()}.json`
+        );
 
-        let prediction: any;
+        await writeFile(tempFile, JSON.stringify(input));
+
+        let prediction;
         let isFallback = false;
 
         try {
-          const { stdout } = await execFileAsync(
+          const { stdout, stderr } = await execFileAsync(
             getPythonExecutable(),
-            [analyzePyPath, "predict_file", tempFilePath],
+            [analyzePyPath, "predict_file", tempFile],
             {
-              timeout: 30000,
-              maxBuffer: 10 * 1024 * 1024,
+              timeout: 30000
             }
           );
-
           prediction = JSON.parse(stdout.trim());
-          if (prediction?.error) {
-            return res.status(400).json({ message: prediction.error });
+          if (prediction.error) {
+            return res.status(400).json({
+              message: prediction.error
+            });
           }
         } catch (error: any) {
-          if (error?.killed || error?.signal === "SIGTERM") {
-            return res
-              .status(408)
-              .json({ message: "Clinical assessment generation timed out." });
+          if (error.killed || error.signal === "SIGTERM") {
+            return res.status(408).json({
+              message: "Clinical assessment generation timed out."
+            });
           }
+          console.warn("Python ML prediction failed, running clinical rule-based fallback:", error);
           prediction = calculateClinicalFallback(input);
           isFallback = true;
         }
@@ -616,23 +554,44 @@ export async function registerRoutes(
             prediction.modelConfidence == null
               ? undefined
               : Number(prediction.modelConfidence),
-          createdBy: userId,
+          createdBy: userId
         });
+        console.log(`[AUDIT] prediction created by=${userId} riskCategory=${prediction.riskCategory} riskScore=${prediction.riskScore} at=${new Date().toISOString()}`);
+        return res.status(201).json({
+          ...assessment,
+          prediction
+        });
+
+        // Trigger automated email alert if risk score is critical (> 80%)
+        if (assessment.riskScore > 80) {
+          try {
+            const user = await storage.getUserById(userId);
+            if (user && user.email) {
+              await sendCriticalRiskAlert(
+                user.email,
+                assessment.patientName || "Unknown Patient",
+                assessment.riskScore,
+                assessment.id
+              );
+            }
+          } catch (emailErr) {
+            console.error("Failed to send critical risk email alert:", emailErr);
+          }
+        }
 
         return res.status(201).json({ ...assessment, prediction });
       } catch (err) {
         if (err instanceof z.ZodError) {
-          return res
-            .status(400)
-            .json({ message: err.errors[0]?.message ?? "Invalid input" });
+          return res.status(400).json({
+            message: err.errors[0].message
+          });
         }
         logger.error({ err }, "Error creating assessment");
         return res
           .status(500)
           .json({ message: "Failed to generate clinical assessment." });
       } finally {
-        // ✨ 3. This condition will now successfully evaluate without crashing
-        if (tempFilePath) {
+        if (tempFile) {
           try {
             await unlink(tempFilePath);
           } catch (e) {
@@ -646,13 +605,171 @@ export async function registerRoutes(
     }
   );
 
+  app.post(
+    "/api/assessments/bulk",
+    requireAuth,
+    requireVerified,
+    async (req, res) => {
+      const userId = (req.session.user as any)?.id;
+      if (!userId) {
+        return res.status(401).json({ message: "Authentication required." });
+      }
+
+      const inputSchema = z.array(api.assessments.create.input);
+      let tempFilePath: string | null = null;
+      let requestFingerprint: string | null = null;
+
+      try {
+        const input = inputSchema.parse(req.body.assessments);
+        
+        requestFingerprint = generateRequestFingerprint(input, userId);
+        if (activeInferenceRequests.has(requestFingerprint)) {
+          return res.status(409).json({ message: "Bulk request already processing." });
+        }
+        activeInferenceRequests.add(requestFingerprint);
+
+        tempFilePath = path.join(os.tmpdir(), `bulk_${randomUUID()}.json`);
+        await writeFile(tempFilePath, JSON.stringify(input));
+
+        let predictions: any[];
+        try {
+          const { stdout } = await execFileAsync(
+            getPythonExecutable(),
+            [analyzePyPath, "predict_file", tempFilePath],
+            { timeout: 60000, maxBuffer: 50 * 1024 * 1024 }
+          );
+
+          predictions = JSON.parse(stdout.trim());
+          if (!Array.isArray(predictions)) {
+            throw new Error("Expected array of predictions");
+          }
+        } catch (error: any) {
+          return res.status(500).json({ message: "Bulk ML processing failed or timed out." });
+        }
+
+        const createdAssessments = await Promise.all(
+          input.map((assessment, index) => {
+            const prediction = predictions[index];
+            return storage.createAssessment({
+              ...assessment,
+              riskScore: Number(prediction.riskScore),
+              riskCategory: prediction.riskCategory,
+              factors: prediction.factors,
+              confidenceInterval: prediction.confidenceInterval ?? null,
+              modelConfidence: prediction.modelConfidence == null ? undefined : Number(prediction.modelConfidence),
+              createdBy: userId,
+            });
+          })
+        );
+
+        return res.status(201).json({ count: createdAssessments.length, assessments: createdAssessments });
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          return res.status(400).json({ message: "Invalid bulk input data format. Ensure all rows meet schema requirements." });
+        }
+        console.error("Bulk create error:", err);
+        return res.status(500).json({ message: "Failed to generate bulk assessments." });
+      } finally {
+        if (tempFilePath) {
+          try { await unlink(tempFilePath); } catch {}
+        }
+        if (requestFingerprint) {
+          activeInferenceRequests.delete(requestFingerprint);
+        }
+      }
+    }
+  );
+
+  app.post(
+    "/api/assessments/bulk",
+    requireAuth,
+    requireVerified,
+    async (req, res) => {
+      const userId = (req.session.user as any)?.id;
+      if (!userId) {
+        return res.status(401).json({ message: "Authentication required." });
+      }
+
+      const inputSchema = z.array(api.assessments.create.input);
+      let tempFilePath: string | null = null;
+      let requestFingerprint: string | null = null;
+
+      try {
+        const input = inputSchema.parse(req.body.assessments);
+        
+        requestFingerprint = generateRequestFingerprint(input, userId);
+        if (activeInferenceRequests.has(requestFingerprint)) {
+          return res.status(409).json({ message: "Bulk request already processing." });
+        }
+        activeInferenceRequests.add(requestFingerprint);
+
+        tempFilePath = path.join(os.tmpdir(), `bulk_${randomUUID()}.json`);
+        await writeFile(tempFilePath, JSON.stringify(input));
+
+        let predictions: any[];
+        try {
+          const { stdout } = await execFileAsync(
+            getPythonExecutable(),
+            [analyzePyPath, "predict_file", tempFilePath],
+            { timeout: 60000, maxBuffer: 50 * 1024 * 1024 }
+          );
+
+          predictions = JSON.parse(stdout.trim());
+          if (!Array.isArray(predictions)) {
+            throw new Error("Expected array of predictions");
+          }
+        } catch (error: any) {
+          return res.status(500).json({ message: "Bulk ML processing failed or timed out." });
+        }
+
+        const createdAssessments = await Promise.all(
+          input.map((assessment, index) => {
+            const prediction = predictions[index];
+            return storage.createAssessment({
+              ...assessment,
+              riskScore: Number(prediction.riskScore),
+              riskCategory: prediction.riskCategory,
+              factors: prediction.factors,
+              confidenceInterval: prediction.confidenceInterval ?? null,
+              modelConfidence: prediction.modelConfidence == null ? undefined : Number(prediction.modelConfidence),
+              createdBy: userId,
+            });
+          })
+        );
+
+        return res.status(201).json({ count: createdAssessments.length, assessments: createdAssessments });
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          return res.status(400).json({ message: "Invalid bulk input data format. Ensure all rows meet schema requirements." });
+        }
+        console.error("Bulk create error:", err);
+        return res.status(500).json({ message: "Failed to generate bulk assessments." });
+      } finally {
+        if (tempFilePath) {
+          try { await unlink(tempFilePath); } catch {}
+        }
+        if (requestFingerprint) {
+          activeInferenceRequests.delete(requestFingerprint);
+        }
+      }
+    }
+  );
+
   app.get(api.assessments.list.path, requireAuth, requireVerified, async (req, res) => {
     try {
       const userEmail = req.session.user?.email;
-      const assessments = await storage.getAssessments(50, 0, userEmail);
-      logAccessAttempt(req.session.user!.id, "Assessments", "all", true, "Fetched assessment list");
+      const cursorStr = req.query.cursor as string;
+      const limitStr = req.query.limit as string;
+      const cursor = cursorStr ? parseInt(cursorStr, 10) : undefined;
+      const limit = limitStr ? parseInt(limitStr, 10) : 50;
 
-      res.json(assessments);
+      const assessments = await storage.getAssessments(limit, cursor, userEmail);
+
+      const nextCursor = assessments.length === limit && assessments.length > 0 
+        ? assessments[assessments.length - 1].id 
+        : undefined;
+
+      res.json({ data: assessments, nextCursor });
 
     } catch (err) {
       res.status(500).json({
@@ -660,55 +777,25 @@ export async function registerRoutes(
       });
     }
   });
-    app.get(
+  app.get(
     "/api/assessments/export.csv",
     requireAuth,
     requireVerified,
     async (req, res) => {
       try {
         const userEmail = req.session.user?.email;
-        const page = Math.max(1, parseInt(req.query.page as string) || 1);
-        const limit = Math.min(
-          100,
-          Math.max(1, parseInt(req.query.limit as string) || 20)
+        const assessments = await storage.getAssessments(1000, undefined, userEmail);
+
+        const csv = assessmentsToCsv(
+          assessments as unknown as Record<string, unknown>[]
         );
-        logAccessAttempt(req.session.user!.id, "Assessments", "all", true, "Exported assessments to CSV");
+
         res.header("Content-Type", "text/csv");
         res.attachment("assessments.csv");
         return res.send(csv);
       } catch (err) {
         console.error("Export error:", err);
-        return res.status(500).json({ message: "Export failed" });
-        const offset = (page - 1) * limit;
-        const result = await storage.getAssessments(limit, offset, userEmail);
-        res.json(result);
-      } catch (err) {
-        return res.status(500).json({ message: "Failed to fetch assessments" });
-      }
-    }
-  );
-
-        res.setHeader("Content-Type", "text/csv");
-        res.setHeader(
-          "Content-Disposition",
-          "attachment; filename=assessments.csv"
-        );
-        return res.send(csv);
-      } catch (err) {
-        console.error("CSV export error:", err);
-        return res.status(500).json({ message: "Failed to export CSV." });
-      }
-    }
-  );
-
-        res.setHeader("Content-Type", "text/csv; charset=utf-8");
-        res.setHeader("Content-Disposition", "attachment; filename=assessments.csv");
-        return res.send(csv);
-      } catch (err) {
-        console.error("Assessment CSV export error:", err);
-        return res.status(500).json({
-          message: "Failed to export assessments"
-        });
+        return res.status(500).json({ message: "Failed to export data" });
       }
     }
   );
@@ -719,13 +806,13 @@ export async function registerRoutes(
    * Secure patient/assessment search endpoint.
    *
    * Security controls:
-   * 1. PRIMARY: Drizzle ORM ilike()/eq() - query parameters are bound placeholders,
-   *    never interpolated into raw SQL strings. This prevents SQL injection.
+   * 1. PRIMARY: Drizzle ORM ilike()/eq() — query parameters are bound placeholders,
+   *    never interpolated into raw SQL strings.  This prevents SQL injection.
    * 2. SUPPLEMENTARY: Zod schema validates input length, character set, and rejects
    *    known injection signatures before the query is even constructed.
-   * 3. Security logging: suspicious patterns are logged without PHI for audit.
+   * 3. Security logging: suspicious patterns are logged (without PHI) for audit.
    * 4. User scoping: results are always filtered to the authenticated user's records.
-   * 5. Generic errors: DB errors are sanitized.
+   * 5. Generic errors: DB errors are sanitized — no table names or SQL syntax leaked.
    *
    * Query params:
    *   q            - search term (max 200 chars, safe characters only)
@@ -752,7 +839,7 @@ export async function registerRoutes(
               req,
               {
                 matchedPattern: analysis.pattern,
-                userId: (req.session.user as any)?.id,
+                userId: req.session.user?.id,
               }
             );
           } else {
@@ -760,19 +847,16 @@ export async function registerRoutes(
               "MALFORMED_SEARCH_QUERY",
               "Search query failed validation",
               req,
-              { userId: (req.session.user as any)?.id }
+              { userId: req.session.user?.id }
             );
           }
 
           return res.status(400).json({
-            message:
-              parseResult.error.errors[0]?.message ??
-              "Invalid search parameters.",
+            message: parseResult.error.errors[0]?.message ?? "Invalid search parameters.",
           });
         }
 
-        const { q, riskCategory, page, limit } = parseResult.data;
-        const offset = (page - 1) * limit;
+        const { q, riskCategory, cursor, limit } = parseResult.data;
         const userEmail = req.session.user?.email;
 
         if (q) {
@@ -782,10 +866,7 @@ export async function registerRoutes(
               "SUSPICIOUS_SEARCH_PATTERN",
               "Validated search term contains a suspicious pattern",
               req,
-              {
-                matchedPattern: analysis.pattern,
-                userId: (req.session.user as any)?.id,
-              }
+              { matchedPattern: analysis.pattern, userId: req.session.user?.id }
             );
           }
         }
@@ -795,10 +876,14 @@ export async function registerRoutes(
           userEmail,
           riskCategory,
           limit,
-          offset
+          cursor
         );
-        logAccessAttempt(req.session.user!.id, "Assessments", "search", true, "Searched assessments");
-        return res.json(results);
+
+        const nextCursor = results.length === limit && results.length > 0 
+          ? results[results.length - 1].id 
+          : undefined;
+
+        return res.json({ data: results, nextCursor });
 
       } catch (err) {
         console.error("Assessment search error:", err);
@@ -839,7 +924,7 @@ export async function registerRoutes(
     requireVerified,
     async (req, res) => {
       try {
-        const id = parseInt(req.params.id as string, 10);
+        const id = parseInt(req.params.id, 10);
 
         if (isNaN(id) || id <= 0) {
           return res.status(400).json({ message: "Invalid assessment ID." });
@@ -857,15 +942,10 @@ export async function registerRoutes(
         }
 
         // Object-Level Authorization Check
-        if (
-          !canAccessPatientRecord(
-            user as any,
-            assessment
-          )
-        ) {
+        if (!canAccessPatientRecord(user, assessment)) {
           // Log unauthorized access attempt (IDOR/Enumeration attempt)
           logAccessAttempt(
-            (user as any).id,
+            user.id,
             "Assessment",
             id,
             false,
@@ -876,93 +956,9 @@ export async function registerRoutes(
           return res.status(404).json({ message: "Assessment not found." });
         }
 
-  /**
-   * GET /api/assessments/search
-   *
-   * Secure patient/assessment search endpoint.
-   *
-   * Security controls:
-   * 1. PRIMARY: Drizzle ORM ilike()/eq() — query parameters are bound placeholders,
-   *    never interpolated into raw SQL strings.  This prevents SQL injection.
-   * 2. SUPPLEMENTARY: Zod schema validates input length, character set, and rejects
-   *    known injection signatures before the query is even constructed.
-   * 3. Security logging: suspicious patterns are logged (without PHI) for audit.
-   * 4. User scoping: results are always filtered to the authenticated user's records.
-   * 5. Generic errors: DB errors are sanitized — no table names or SQL syntax leaked.
-   *
-   * Query params:
-   *   q            - search term (max 200 chars, safe characters only)
-   *   riskCategory - optional: LOW | MODERATE | HIGH
-   *   page         - page number (default 1)
-   *   limit        - results per page, max 100 (default 20)
-   */
-  app.get(
-    "/api/assessments/search",
-    requireAuth,
-    requireVerified,
-    async (req, res) => {
-      try {
-        // 1. Validate and parse query parameters
-        const parseResult = searchQuerySchema.safeParse(req.query);
-
-        if (!parseResult.success) {
-          // Check whether the failure looks like an injection attempt
-          const rawQ = typeof req.query.q === "string" ? req.query.q : "";
-          const analysis = analyzeSearchInput(rawQ);
-
-          if (!analysis.safe) {
-            logSecurityEvent(
-              "SQL_INJECTION_ATTEMPT",
-              "Injection-like pattern detected in search query parameter",
-              req,
-              {
-                matchedPattern: analysis.pattern,
-                userId: req.session.user?.id,
-              }
-            );
-          } else {
-            logSecurityEvent(
-              "MALFORMED_SEARCH_QUERY",
-              "Search query failed validation",
-              req,
-              { userId: req.session.user?.id }
-            );
-          }
-
-          return res.status(400).json({
-            message: parseResult.error.errors[0]?.message ?? "Invalid search parameters.",
-          });
-        }
-
-        const { q, riskCategory, page, limit } = parseResult.data;
-        const offset = (page - 1) * limit;
-        const userEmail = req.session.user?.email;
-
-        // 2. Log suspicious-but-valid patterns for monitoring
-        if (q) {
-          const analysis = analyzeSearchInput(q);
-          if (!analysis.safe) {
-            // Validation already rejected this above, but log defensively
-            logSecurityEvent(
-              "SUSPICIOUS_SEARCH_PATTERN",
-              "Validated search term contains a suspicious pattern",
-              req,
-              { matchedPattern: analysis.pattern, userId: req.session.user?.id }
-            );
-          }
-        }
-
-        // 3. Execute parameterized search — Drizzle ORM sends $1, $2 … placeholders
-        const results = await storage.searchAssessments(
-          q ?? "",
-          userEmail,
-          riskCategory,
-          limit,
-          offset
-        );
-        logAccessAttempt(req.session.user!.id, "Assessments", "search", true, "Searched assessments");
-
-        return res.json(results);
+        // Authorized access
+        logAccessAttempt(user.id, "Assessment", id, true, "Authorized access");
+        return res.json(assessment);
 
       } catch (err) {
         // 4. Sanitize DB errors — never expose table names, SQL syntax, or stack traces

@@ -185,9 +185,9 @@ async function establishAuthenticatedSession(
 /**
  * Creates an authentication router with login, register, logout, and session-check endpoints.
  *
- * In development mode, credentials are validated against environment variables
- * (DEV_CLINICIAN_EMAIL / DEV_CLINICIAN_PASSWORD). In production, this serves
- * as the auth gateway for all protected API routes.
+ * Credentials are validated against hashed passwords in the database (or the
+ * in-memory store during initial registration). All users must complete OTP
+ * verification to establish an authenticated session.
  */
 export function createAuthRouter(): Router {
   const router = Router();
@@ -311,19 +311,13 @@ export function createAuthRouter(): Router {
       return res.status(400).json({ message: "Email and password are required." });
     }
 
-    const devEmail = process.env.DEV_CLINICIAN_EMAIL || "";
-    const devPassword = process.env.DEV_CLINICIAN_PASSWORD || "";
-
     let userName: string | null = null;
 
-    if (email === devEmail && password === devPassword) {
-      userName = "Dr. Smith";
-    } else {
-      // Check in-memory store (legacy)
-      const registeredUser = registeredUsers.get(email);
-      if (registeredUser && verifyPassword(password, registeredUser.passwordHash)) {
-        userName = registeredUser.fullName;
-      }
+    // Check in-memory store (legacy)
+    const registeredUser = registeredUsers.get(email);
+    if (registeredUser && verifyPassword(password, registeredUser.passwordHash)) {
+      userName = registeredUser.fullName;
+    }
 
       // Also check DB
       if (!userName) {
@@ -412,6 +406,14 @@ export function createAuthRouter(): Router {
 
     pendingOtps.delete(email);
 
+    const db = getDb();
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
     const devEmail = process.env.DEV_CLINICIAN_EMAIL || "";
 
     let id: string;
@@ -440,6 +442,9 @@ export function createAuthRouter(): Router {
       role = user.role ?? "provider";
       emailVerified = user.emailVerified ?? false;
     }
+    const id = user.id;
+    const name = user.fullName;
+    const role = user.role ?? "provider";
 
     try {
       await establishAuthenticatedSession(req, { id, email, name, role, emailVerified });
