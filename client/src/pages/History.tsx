@@ -1,5 +1,5 @@
 import { AppLayout } from "@/components/layout/AppLayout";
-import { useAssessments } from "@/hooks/use-assessments";
+import { useAssessments, usePatientAssessments, useClearPatientCache } from "@/hooks/use-assessments";
 import {
   format,
   isValid,
@@ -17,6 +17,7 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
+  ShieldAlert,
 } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import StatusPill from "@/components/ui/StatusPill";
@@ -24,6 +25,7 @@ import ConfidenceRange from "@/components/ui/ConfidenceRange";
 import { FileText, RotateCw } from "lucide-react";
 import { useLocation } from "wouter";
 import { advancedFilter } from "@/utils/search_filters";
+import { validateSearchInput } from "@/validation/filterValidation";
 
 function HighlightText({ text, search }: { text: string; search: string }) {
   if (!search.trim()) return <>{text}</>;
@@ -60,6 +62,8 @@ export default function History() {
   const { data: infiniteData, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } = useAssessments();
   const assessments = infiniteData ? infiniteData.pages.flatMap((page) => page.data) : [];
   const [searchTerm, setSearchTerm] = useState("");
+  // Security (Issue #743): track if the last input was rejected so we can show a warning.
+  const [searchRejected, setSearchRejected] = useState(false);
   const [sortBy, setSortBy] = useState<string>("date-desc");
 
   // Date filter state
@@ -336,9 +340,37 @@ export default function History() {
                 type="text"
                 placeholder="Search history..."
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-10 py-2.5 rounded-xl border border-border bg-card focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-600/20 transition-all w-full sm:w-64"
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  // FIX for Issue #743: validate and sanitize input before storing in
+                  // state. SQL injection patterns (e.g. `' OR 1=1 --`) are rejected
+                  // here at the client layer. The server independently validates via
+                  // Drizzle ORM parameterized queries + Zod schema (defence in depth).
+                  const safe = validateSearchInput(raw, () => {
+                    setSearchRejected(true);
+                    // Auto-clear the warning after 3 seconds
+                    setTimeout(() => setSearchRejected(false), 3000);
+                  });
+                  setSearchTerm(safe);
+                }}
+                className={`pl-10 pr-10 py-2.5 rounded-xl border bg-card focus:outline-none focus:ring-4 transition-all w-full sm:w-64 ${
+                  searchRejected
+                    ? "border-red-400 focus:border-red-500 focus:ring-red-100 dark:focus:ring-red-900/30"
+                    : "border-border focus:border-blue-600 focus:ring-blue-600/20"
+                }`}
+                aria-invalid={searchRejected}
+                aria-describedby={searchRejected ? "search-security-warning" : undefined}
               />
+              {searchRejected && (
+                <div
+                  id="search-security-warning"
+                  role="alert"
+                  className="absolute top-full mt-1.5 left-0 z-10 flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/40 dark:border-red-800 px-3 py-1.5 text-xs font-semibold text-red-600 dark:text-red-400 shadow-sm"
+                >
+                  <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+                  Invalid search pattern detected and blocked.
+                </div>
+              )}
               {searchTerm && (
                 <button
                   type="button"
