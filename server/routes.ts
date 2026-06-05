@@ -24,6 +24,7 @@ import {
   analyzeSearchInput,
   logSecurityEvent,
 } from "./security/sqlProtection";
+import { assessmentsToCsv } from "./utils/csvExport";
 import { searchQuerySchema } from "./validation/searchValidation";
 import { canAccessPatientRecord } from "./services/authz/patient-access";
 import { logAccessAttempt } from "./security/access-audit";
@@ -1577,7 +1578,7 @@ export async function registerRoutes(
       const result = await storage.getAllUsers(page, limit);
       res.json(result);
     } catch (err) {
-      logger.error("Admin users fetch error:", err);
+      logger.error({ err }, "Admin users fetch error:");
       res.status(500).json({ message: "Failed to fetch users." });
     }
   });
@@ -1589,7 +1590,7 @@ export async function registerRoutes(
       const result = await storage.getLoginAuditLogs(page, limit);
       res.json(result);
     } catch (err) {
-      logger.error("Admin audit logs fetch error:", err);
+      logger.error({ err }, "Admin audit logs fetch error:");
       res.status(500).json({ message: "Failed to fetch audit logs." });
     }
   });
@@ -1601,7 +1602,7 @@ export async function registerRoutes(
       const updated = await storage.updateUser(id, { isActive, role });
       res.json(updated);
     } catch (err) {
-      logger.error("Admin user update error:", err);
+      logger.error({ err }, "Admin user update error:");
       res.status(500).json({ message: "Failed to update user." });
     }
   });
@@ -1611,7 +1612,7 @@ export async function registerRoutes(
       const stats = await storage.getSystemStats();
       res.json(stats);
     } catch (err) {
-      logger.error("Admin stats fetch error:", err);
+      logger.error({ err }, "Admin stats fetch error:");
       res.status(500).json({ message: "Failed to fetch system stats." });
     }
   });
