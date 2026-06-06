@@ -38,7 +38,7 @@ describe("sendVerificationCode", () => {
     try {
       const sent = await sendVerificationCode("test@example.com", "123456");
       expect(sent).toBe(false);
-      const loggedOutput = JSON.stringify(logSpy.mock.calls);
+      const loggedOutput = logSpy.mock.calls.map((call: any) => JSON.stringify(call)).join(" ");
       expect(loggedOutput).not.toContain("EMAIL VERIFICATION");
     } finally {
       process.env.NODE_ENV = originalEnv;
@@ -51,7 +51,7 @@ describe("sendVerificationCode", () => {
     try {
       const sent = await sendVerificationCode("test@example.com", "123456");
       expect(sent).toBe(true);
-      const loggedOutput = JSON.stringify(logSpy.mock.calls);
+      const loggedOutput = logSpy.mock.calls.map((call: any) => JSON.stringify(call)).join(" ");
       expect(loggedOutput).toContain("123456");
       expect(loggedOutput).toContain("EMAIL VERIFICATION");
     } finally {
@@ -125,7 +125,7 @@ describe("sendCriticalRiskAlert", () => {
     try {
       const sent = await sendCriticalRiskAlert("doc@example.com", "Jane Doe", 85.5, 123);
       expect(sent).toBe(true);
-      const loggedOutput = JSON.stringify(logSpy.mock.calls);
+      const loggedOutput = logSpy.mock.calls.map((call: any) => JSON.stringify(call)).join(" ");
       expect(loggedOutput).toContain("CRITICAL RISK ALERT MOCK LOG");
       expect(loggedOutput).toContain("doc@example.com");
       expect(loggedOutput).toContain("Jane Doe");
@@ -142,7 +142,7 @@ describe("sendCriticalRiskAlert", () => {
     try {
       const sent = await sendCriticalRiskAlert("doc@example.com", "Jane Doe", 85.5, 123);
       expect(sent).toBe(false);
-      const loggedOutput = JSON.stringify(logSpy.mock.calls);
+      const loggedOutput = logSpy.mock.calls.map((call: any) => JSON.stringify(call)).join(" ");
       expect(loggedOutput).not.toContain("CRITICAL RISK ALERT MOCK LOG");
     } finally {
       process.env.NODE_ENV = originalEnv;
