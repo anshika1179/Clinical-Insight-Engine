@@ -30,6 +30,7 @@ import { AssessmentFilters } from "@/components/AssessmentFilters";
 import { ActiveFilterChips } from "@/components/ActiveFilterChips";
 import { ClearFiltersButton } from "@/components/ClearFiltersButton";
 import { validateSearchInput } from "@/validation/filterValidation";
+import AssessmentComparisonCard from "@/components/AssessmentComparisonCard";
 
 function HighlightText({ text, search }: { text: string; search: string }) {
   if (!search.trim()) return <>{text}</>;
@@ -146,6 +147,49 @@ export default function History() {
     const newUrl = `${window.location.pathname}${params.toString() ? '?' + params.toString() : ''}`;
     window.history.replaceState({}, '', newUrl);
   }, [searchTerm]);
+
+  const hasActiveFilters =
+    searchTerm !== "" ||
+    riskCategory !== "All" ||
+    gender !== "All" ||
+    minAge !== undefined ||
+    maxAge !== undefined ||
+    startDate !== "" ||
+    endDate !== "";
+
+  const clearAllFilters = () => {
+    setSearchTerm("");
+    setRiskCategory("All");
+    setGender("All");
+    setMinAge(undefined);
+    setMaxAge(undefined);
+    setStartDate("");
+    setEndDate("");
+  };
+
+  const activeFilterChips = useMemo(() => {
+    const chips: any[] = [];
+    if (searchTerm) {
+      chips.push({ id: 'search', label: `Search: ${searchTerm}`, onRemove: () => setSearchTerm("") });
+    }
+    if (riskCategory !== "All") {
+      chips.push({ id: 'risk', label: `Risk: ${riskCategory}`, onRemove: () => setRiskCategory("All") });
+    }
+    if (gender !== "All") {
+      chips.push({ id: 'gender', label: `Gender: ${gender}`, onRemove: () => setGender("All") });
+    }
+    if (minAge !== undefined || maxAge !== undefined) {
+      const min = minAge !== undefined ? minAge : 0;
+      const max = maxAge !== undefined ? maxAge : '120+';
+      chips.push({ id: 'age', label: `Age: ${min} - ${max}`, onRemove: () => { setMinAge(undefined); setMaxAge(undefined); } });
+    }
+    if (startDate || endDate) {
+      const start = startDate ? format(new Date(startDate), "MMM d, yyyy") : "Any";
+      const end = endDate ? format(new Date(endDate), "MMM d, yyyy") : "Any";
+      chips.push({ id: 'date', label: `Date: ${start} - ${end}`, onRemove: () => { setStartDate(""); setEndDate(""); } });
+    }
+    return chips;
+  }, [searchTerm, riskCategory, gender, minAge, maxAge, startDate, endDate]);
 
   const handleUploadLabResults = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
