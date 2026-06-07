@@ -262,6 +262,25 @@ assessmentsRouter.get(
 );
 
 assessmentsRouter.get(
+  "/autocomplete",
+  requireAuth,
+  requireVerified,
+  async (req, res) => {
+    try {
+      const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+      if (!q || q.length < 2) {
+        return res.json([]);
+      }
+      const userEmail = req.session.user?.email;
+      const names = await storage.autocompletePatientNames(q, userEmail, 10);
+      return res.json(names);
+    } catch (err) {
+      return res.status(500).json({ message: "Failed to fetch autocomplete suggestions" });
+    }
+  }
+);
+
+assessmentsRouter.get(
   "/:id",
   requireAuth,
   requireVerified,
