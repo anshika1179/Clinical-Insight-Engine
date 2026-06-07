@@ -11,16 +11,7 @@ import {
   ReferenceLine,
 } from "recharts";
 import { format, isValid } from "date-fns";
-
-interface Assessment {
-  id: number;
-  createdAt: any;
-  riskScore: any;
-  bmi: any;
-  hba1cLevel: any;
-  bloodGlucoseLevel: any;
-  riskCategory: string;
-}
+import type { Assessment } from "@shared/schema";
 
 interface PatientGroup {
   patientName: string;
@@ -80,13 +71,13 @@ export default function RiskTrendChart({ assessments, patientGroups }: Props) {
       .map(a => {
         const dateObj = a.createdAt ? new Date(a.createdAt) : null;
         return {
-        date: dateObj && isValid(dateObj) ? dateObj.toISOString() : "?",
-        riskScore: Number(Number(a.riskScore).toFixed(1)),
-        bmi: Number(Number(a.bmi).toFixed(1)),
-        hba1cLevel: Number(Number(a.hba1cLevel).toFixed(1)),
-        bloodGlucoseLevel: Number(Number(a.bloodGlucoseLevel).toFixed(1)),
-        riskCategory: a.riskCategory,
-      };
+          date: dateObj && isValid(dateObj) ? dateObj.toISOString() : "?",
+          riskScore: Number(Number(a.riskScore).toFixed(1)),
+          bmi: Number(Number(a.bmi).toFixed(1)),
+          hba1cLevel: Number(Number(a.hba1cLevel).toFixed(1)),
+          bloodGlucoseLevel: Number(Number(a.bloodGlucoseLevel).toFixed(1)),
+          riskCategory: a.riskCategory,
+        };
       });
   }, [assessments, patientGroups, isComparisonMode]);
 
@@ -125,6 +116,8 @@ export default function RiskTrendChart({ assessments, patientGroups }: Props) {
           {METRICS.map(({ key, label, color }) => (
             <button
               key={key}
+              type="button"
+              aria-pressed={activeMetrics[key]}
               onClick={() => toggleMetric(key)}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
                 activeMetrics[key]

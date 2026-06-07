@@ -31,6 +31,7 @@ import { calculateHealthBadges } from "@/utils/healthBadges";
 import { AssessmentSearchBar } from "@/components/AssessmentSearchBar";
 import { AssessmentFilters } from "@/components/AssessmentFilters";
 import { ActiveFilterChips } from "@/components/ActiveFilterChips";
+import { ClearFiltersButton } from "@/components/ClearFiltersButton";
 import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 import { ClearFiltersButton } from "@/components/ClearFiltersButton";
 import { validateSearchInput } from "@/validation/filterValidation";
@@ -87,6 +88,12 @@ export default function History() {
     };
     return [fieldMap[parts[0]] || "createdAt", parts[1] || "desc"];
   }, [sortBy]);
+
+  // New filter state
+  const [riskCategory, setRiskCategory] = useState<RiskCategoryFilterValue>("All");
+  const [gender, setGender] = useState<GenderFilterValue>("All");
+  const [minAge, setMinAge] = useState<number | undefined>(undefined);
+  const [maxAge, setMaxAge] = useState<number | undefined>(undefined);
 
   // New filter state
   const [riskCategory, setRiskCategory] = useState<RiskCategoryFilterValue>("All");
@@ -423,6 +430,21 @@ export default function History() {
     }, 250);
   }
 
+  const filteredAssessments = useMemo(() => {
+    return filterAssessments(assessments, {
+      searchTerm,
+      riskCategory,
+      gender,
+      ageRange: {
+        min: minAge,
+        max: maxAge,
+      },
+      dateRange: {
+        startDate,
+        endDate,
+      },
+    });
+  }, [assessments, searchTerm, riskCategory, gender, minAge, maxAge, startDate, endDate]);
   const latestBadgeAssessment = useMemo(() => {
     if (assessments.length === 0) return null;
     return (
@@ -476,6 +498,35 @@ export default function History() {
     setCurrentPage(1);
   }, [searchTerm, riskCategory, gender, minAge, maxAge, startDate, endDate, sortBy]);
 
+  const latestBadgeAssessment = useMemo(() => {
+    if (sortedAssessments.length === 0) return null;
+    return (
+      sortedAssessments.find((assessment) =>
+        calculateHealthBadges(assessment, sortedAssessments).length > 0
+      ) || sortedAssessments[0]
+    );
+  }, [sortedAssessments]);
+
+  const latestBadges = useMemo(() => {
+    if (!latestBadgeAssessment) return [];
+    return calculateHealthBadges(latestBadgeAssessment, sortedAssessments);
+  }, [latestBadgeAssessment, sortedAssessments]);
+
+  const selectedPatientBadges = useMemo(() => {
+    const sortedHistory = [...selectedPatientHistory].sort(
+      (a, b) =>
+        new Date(b.createdAt || 0).getTime() -
+        new Date(a.createdAt || 0).getTime()
+    );
+
+    if (sortedHistory.length === 0) return [];
+    return calculateHealthBadges(sortedHistory[0], sortedHistory);
+  }, [selectedPatientHistory]);
+
+  // 4. Pagination
+  const totalRecords = assessments.length;
+  const filteredRecords = sortedAssessments.length;
+  const paginatedAssessments = sortedAssessments;
   // 4. Pagination (Server-Side)
   const totalRecords = assessmentsData?.total ?? 0;
   const filteredRecords = assessmentsData?.total ?? 0;
@@ -641,7 +692,7 @@ export default function History() {
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
-              className="px-4 py-2.5 rounded-xl border border-border bg-card focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-600/20 transition-all w-full sm:w-48 text-sm font-semibold text-foreground cursor-pointer"
+              className="px-4 py-2.5 rounded-xl border border-border bg-card focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-600/20 transition-all duration-200 ease-in-out w-full sm:w-48 text-sm font-semibold text-foreground cursor-pointer"
             >
               <option value="date-desc">Newest First</option>
               <option value="date-asc">Oldest First</option>
@@ -656,9 +707,28 @@ export default function History() {
         </div>
 
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-            <Loader2 className="w-8 h-8 animate-spin mb-4 text-primary" />
-            <p>Loading assessment history...</p>
+          <div className="space-y-6 animate-pulse">
+            <div className="grid gap-6">
+              <div className="h-48 rounded-3xl bg-card border border-border"></div>
+              <div className="h-64 rounded-3xl bg-card border border-border"></div>
+            </div>
+            <div className="bg-card rounded-2xl shadow-sm border border-border overflow-hidden">
+              <div className="h-12 bg-muted/50 border-b border-border"></div>
+              <div className="divide-y divide-border">
+                {[1, 2, 3, 4, 5].map(i => (
+                  <div key={i} className="flex items-center justify-between p-4 h-16">
+                    <div className="h-4 bg-muted rounded w-24"></div>
+                    <div className="h-4 bg-muted rounded w-32"></div>
+                    <div className="h-4 bg-muted rounded w-16"></div>
+                    <div className="h-4 bg-muted rounded w-16"></div>
+                    <div className="h-4 bg-muted rounded w-16"></div>
+                    <div className="h-4 bg-muted rounded w-16"></div>
+                    <div className="h-4 bg-muted rounded w-20"></div>
+                    <div className="h-6 bg-muted rounded-full w-24"></div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         ) : error ? (
           <div className="p-6 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive text-center">
@@ -781,7 +851,7 @@ export default function History() {
                         />
                       </td>
                       <td className="p-4">
-                        <div className="font-bold flex items-center gap-3">
+                        <div className="font-black text-base flex items-center gap-3">
                           <span>
                             {Number(assessment.riskScore).toFixed(1)}%
                           </span>
@@ -1053,6 +1123,7 @@ export default function History() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
+                    {selectedPatientHistory.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()).map((a) => (
                     {sortedSelectedPatientHistory.map((a) => (
                       <tr key={a.id} className="hover:bg-muted/30 transition-colors">
                         <td className="p-3 whitespace-nowrap">{formatAssessmentDate(a.createdAt)}</td>
