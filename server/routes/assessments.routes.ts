@@ -7,6 +7,7 @@ import { requireAuth, requireVerified } from "../auth";
 import { api } from "@shared/routes";
 import { storage } from "../storage";
 import { MLService } from "../services/mlService";
+import { generateRecommendations } from "../services/recommendation-engine";
 import {
   sanitizeDatabaseError,
   analyzeSearchInput,
@@ -181,7 +182,7 @@ assessmentsRouter.get(
         createdBy: userEmail,
       });
 
-      res.json(result);
+      res.json(mapped);
     } catch (err) {
       logger.error({ err }, "Fetch assessments error:");
       return res.status(500).json({ message: "Failed to fetch assessments" });
@@ -317,7 +318,8 @@ assessmentsRouter.get(
       }
 
       logAccessAttempt((user as any).id, "Assessment", id, true, "Authorized access");
-      return res.json(assessment);
+      const recommendations = generateRecommendations({ ...assessment, riskCategory: assessment.riskCategory });
+      return res.json({ ...assessment, recommendations });
     } catch (err) {
       logger.error({ err }, "Assessment fetch error:");
       const { statusCode, message } = sanitizeDatabaseError(err);

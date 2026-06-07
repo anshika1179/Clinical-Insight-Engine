@@ -137,6 +137,15 @@ export type PredictionAdvice = {
   patientAdvice?: string[];
 };
 
+export type Recommendation = {
+  id: string;
+  title: string;
+  description: string;
+  urgency?: "low" | "medium" | "high";
+  audience?: "clinician" | "patient" | "both";
+  checklist?: boolean;
+};
+
 export type AssessmentResponse = z.infer<typeof api.assessments.create.responses[201]> & {
   prediction?: PredictionAdvice & {
     riskScore?: number;
@@ -146,6 +155,7 @@ export type AssessmentResponse = z.infer<typeof api.assessments.create.responses
     disclaimer?: string;
     isFallback?: boolean;
   };
+  recommendations?: Recommendation[];
 };
 export type AssessmentsListResponse = z.infer<typeof api.assessments.list.responses[200]>;
 export type AssessmentPreviewResponse = z.infer<typeof api.assessments.preview.responses[200]>;
