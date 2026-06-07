@@ -10,9 +10,11 @@ import {
   Activity,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   ShieldAlert,
   Upload,
   Download,
+  FileDown,
 } from "lucide-react";
 import { useState, useEffect, useRef, useMemo } from "react";
 import StatusPill from "@/components/ui/StatusPill";
@@ -34,6 +36,13 @@ import { ClearFiltersButton } from "@/components/ClearFiltersButton";
 import { validateSearchInput } from "@/validation/filterValidation";
 import AssessmentComparisonCard from "@/components/AssessmentComparisonCard";
 import { downloadPatientSummaryPdf } from "@/utils/clinicalPdfReport";
+import { downloadBulkAssessmentPdf } from "@/utils/bulkPdfExport";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 
 function HighlightText({ text, search }: { text: string; search: string }) {
   if (!search.trim()) return <>{text}</>;
@@ -254,7 +263,7 @@ export default function History() {
     e.target.value = ''; // Reset input
   };
 
-  const exportFilteredCsv = () => {
+  const buildExportParams = () => {
     const params = new URLSearchParams();
     params.set("page", "1");
     params.set("limit", String(Math.min(Math.max(filteredRecords || PAGE_SIZE, PAGE_SIZE), 1000)));
@@ -269,7 +278,26 @@ export default function History() {
     if (startDate) params.set("startDate", startDate);
     if (endDate) params.set("endDate", endDate);
 
-    window.location.href = `/api/assessments/export.csv?${params.toString()}`;
+    return params;
+  };
+
+  const exportFilteredCsv = () => {
+    window.location.href = `/api/assessments/export.csv?${buildExportParams().toString()}`;
+  };
+
+  const exportFilteredPdf = async () => {
+    try {
+      const params = buildExportParams();
+      params.set("limit", "1000");
+      const res = await fetch(`/api/assessments/?${params.toString()}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to fetch assessment data");
+      const data = await res.json();
+      downloadBulkAssessmentPdf(data.data ?? []);
+    } catch (err: any) {
+      toast({ title: "Export Error", description: err.message, variant: "destructive" });
+    }
   };
 
   const getRiskBadge = (category: string) => {
@@ -565,15 +593,29 @@ export default function History() {
               <input type="file" className="sr-only" onChange={handleUploadLabResults} />
             </label>
 
-            <button
-              type="button"
-              onClick={exportFilteredCsv}
-              disabled={isLoading || filteredRecords === 0}
-              className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
-            >
-              <Download className="w-4 h-4" />
-              Export CSV
-            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  disabled={isLoading || filteredRecords === 0}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+                >
+                  <FileDown className="w-4 h-4" />
+                  Export All
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem onClick={exportFilteredCsv} className="cursor-pointer gap-3">
+                  <Download className="w-4 h-4 text-muted-foreground" />
+                  <span>Export as CSV</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={exportFilteredPdf} className="cursor-pointer gap-3">
+                  <FileDown className="w-4 h-4 text-muted-foreground" />
+                  <span>Export as PDF</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             {/* Sort Dropdown */}
             <select
