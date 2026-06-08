@@ -169,6 +169,28 @@ export const emailVerificationTokens = pgTable("email_verification_tokens", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const modelVersions = pgTable("model_versions", {
+  id: serial("id").primaryKey(),
+  version: integer("version").notNull(),
+  accuracy: doublePrecision("accuracy"),
+  precision: doublePrecision("precision"),
+  recall: doublePrecision("recall"),
+  f1Score: doublePrecision("f1_score"),
+  aucRoc: doublePrecision("auc_roc"),
+  datasetHash: text("dataset_hash"),
+  numSamples: integer("num_samples"),
+  numFeatures: integer("num_features"),
+  classBalance: jsonb("class_balance"),
+  featureDistributions: jsonb("feature_distributions"),
+  trainingDurationMs: integer("training_duration_ms"),
+  status: text("status").default("completed"),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type ModelVersion = typeof modelVersions.$inferSelect;
+export type InsertModelVersion = typeof modelVersions.$inferInsert;
+
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,

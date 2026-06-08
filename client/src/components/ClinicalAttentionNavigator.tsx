@@ -1,5 +1,15 @@
 import React from "react";
-import type { AttentionNavigator } from "@shared/routes";
+
+type PriorityItem = {
+  factor: string;
+  priority: "high" | "moderate" | "monitor";
+  reason: string;
+  value?: number;
+};
+
+type PriorityNavigator = {
+  priorities: PriorityItem[];
+};
 
 const PRIORITY_STYLES: Record<"high" | "moderate" | "monitor", string> = {
   high: "bg-rose-100 text-rose-800 border-rose-200",
@@ -7,7 +17,7 @@ const PRIORITY_STYLES: Record<"high" | "moderate" | "monitor", string> = {
   monitor: "bg-emerald-100 text-emerald-900 border-emerald-200",
 };
 
-export function ClinicalAttentionNavigator({ navigator }: { navigator?: AttentionNavigator }) {
+export function ClinicalAttentionNavigator({ navigator }: { navigator?: PriorityNavigator }) {
   if (!navigator || !navigator.priorities || navigator.priorities.length === 0) {
     return null;
   }
