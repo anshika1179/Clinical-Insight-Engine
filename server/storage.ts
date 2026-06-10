@@ -1,10 +1,14 @@
-import { loginAuditLogs, type Assessment, type InsertAssessment, type AssessmentFactor, type User, type InsertUser, type PatientUser, type InsertPatientUser } from "@shared/schema";
+import { loginAuditLogs, type Assessment, type InsertAssessment, type AssessmentFactor, type User, type InsertUser, type ModelVersion, type InsertModelVersion, type InsertPatientUser, type PatientUser } from "@shared/schema";
+import { assessments, users } from "@shared/schema";
+import { getDb } from "./db";
+import { eq, desc, and, or, ilike } from "drizzle-orm";
 import type { RiskCategory } from "./validation/searchValidation";
 
 import { UserRepository } from "./repositories/user.repository";
 import { AssessmentRepository } from "./repositories/assessment.repository";
 import { AuditRepository } from "./repositories/audit.repository";
 import { AnalyticsRepository } from "./repositories/analytics.repository";
+import { ModelVersionRepository } from "./repositories/model-version.repository";
 import { PatientUserRepository } from "./repositories/patient-user.repository";
 
 export interface IStorage {
@@ -54,10 +58,14 @@ export interface IStorage {
   getSystemStats(): Promise<{ totalUsers: number; totalAssessments: number; riskDistribution: { category: string; count: number }[]; }>;
   recordLoginAudit(params: { userId?: string; ipAddress?: string; userAgent?: string; loginStatus: string; }): Promise<void>;
   getAnalyticsStats(createdBy?: string): Promise<any>;
-  createPatientUser(data: InsertPatientUser): Promise<PatientUser>;
+  getModelVersions(): Promise<ModelVersion[]>;
+  getLatestModelVersion(): Promise<ModelVersion | undefined>;
+  createModelVersion(data: InsertModelVersion): Promise<ModelVersion>;
+  getModelDatasetStats(): Promise<{ classBalance: Record<string, number>; featureStats: Record<string, { mean: number; std: number }>; totalSamples: number } | null>;
   getPatientUserByEmail(email: string): Promise<PatientUser | undefined>;
-  getPatientUserByPatientName(name: string): Promise<PatientUser | undefined>;
+  getPatientUserByPatientName(patientName: string): Promise<PatientUser | undefined>;
   getPatientUserById(id: string): Promise<PatientUser | undefined>;
+  createPatientUser(data: InsertPatientUser): Promise<PatientUser>;
   getAssessmentsByPatientName(patientName: string, limit?: number, offset?: number): Promise<{ data: Assessment[]; total: number }>;
   getPatientTrends(patientName: string): Promise<{ date: string; riskScore: number; riskCategory: string }[]>;
 }
@@ -103,36 +111,36 @@ export class DatabaseStorage implements IStorage {
     return this.userRepository.createUser(data); 
   }
 
-  async getSystemStats() {
-    return this.analyticsRepository.getSystemStats();
+  async createModelVersion(data: InsertModelVersion): Promise<ModelVersion> {
+    return this.modelVersionRepo.create(data);
   }
 
-  async getAnalyticsStats(createdBy?: string) {
-    return this.analyticsRepository.getAnalyticsStats(createdBy);
+  async getModelDatasetStats(): Promise<{ classBalance: Record<string, number>; featureStats: Record<string, { mean: number; std: number }>; totalSamples: number } | null> {
+    return this.modelVersionRepo.getDatasetStats();
   }
 
-  async createPatientUser(data: InsertPatientUser) {
-    return this.patientUserRepository.create(data);
+  async getPatientUserByEmail(email: string): Promise<PatientUser | undefined> {
+    return this.patientUserRepo.findByEmail(email);
   }
 
-  async getPatientUserByEmail(email: string) {
-    return this.patientUserRepository.findByEmail(email);
+  async getPatientUserByPatientName(patientName: string): Promise<PatientUser | undefined> {
+    return this.patientUserRepo.findByPatientName(patientName);
   }
   
   async getSystemStats() { 
     return this.analyticsRepository.getSystemStats(); 
   }
 
-  async getPatientUserById(id: string) {
-    return this.patientUserRepository.findById(id);
+  async createPatientUser(data: InsertPatientUser): Promise<PatientUser> {
+    return this.patientUserRepo.create(data);
   }
   
   async getLoginAuditLogs(page: number, limit: number) { 
     return this.auditRepository.getLoginAuditLogs(page, limit); 
   }
 
-  async getPatientTrends(patientName: string) {
-    return this.assessmentRepository.getPatientTrends(patientName);
+  async getPatientTrends(patientName: string): Promise<{ date: string; riskScore: number; riskCategory: string }[]> {
+    return this.assessmentRepo.getPatientTrends(patientName);
   }
 }
 
