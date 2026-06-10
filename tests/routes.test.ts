@@ -162,9 +162,7 @@ beforeEach(() => {
   );
   mockGetAssessments.mockResolvedValue({
     data: [],
-    total: 0,
-    page: 1,
-    totalPages: 0,
+    nextCursor: null,
   });
   mockExecFile.mockImplementation((cmd, args, opts, cb) => {
     if (typeof opts === "function") {
@@ -548,20 +546,15 @@ describe("Response shape", () => {
           userId: null,
         },
       ],
-      total: 1,
-      page: 1,
-      totalPages: 1,
+      nextCursor: null,
     });
 
     const res = await request(app).get("/api/assessments");
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("data");
-    expect(res.body).toHaveProperty("total");
-    expect(res.body).toHaveProperty("page");
-    expect(res.body).toHaveProperty("totalPages");
+    expect(res.body).toHaveProperty("nextCursor");
     expect(Array.isArray(res.body.data)).toBe(true);
-    expect(typeof res.body.total).toBe("number");
   });
 });
 
