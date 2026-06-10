@@ -243,7 +243,7 @@ export default function ImportData() {
         </Card>
       )}
 
-      {results.length > 0 && !isProcessing && (
+      {!isProcessing && results.length > 0 && !validation && (
         <Button variant="outline" onClick={clearFile}>
           Import Another File
         </Button>

@@ -672,11 +672,59 @@ def interpret_predictions_batch(model, scaler, features, input_data_list, cov_be
 def interpret_prediction(model, scaler, features, input_data, cov_beta=None):
     """Interprets a single patient's data, yielding clinician and patient views."""
     res = interpret_predictions_batch(model, scaler, features, [input_data], cov_beta)
-    if isinstance(res, dict) and "error" in res:
+    if isinstance(res, dict):
         return res
     if isinstance(res, list) and len(res) > 0:
         return res[0]
     return res
+
+def counterfactual_analysis(model, scaler, features, input_data, cov_beta=None):
+    """
+    Performs what-if counterfactual analysis.
+    input_data: dict with 'original' (full assessment) and 'perturbations' (list of overrides).
+    Returns original prediction + ranked perturbation results.
+    """
+    original = input_data["original"]
+    perturbations = input_data.get("perturbations", [])
+
+    # Build all variants: original + each perturbation applied on top of original
+    variants = [original]
+    labels = ["original"]
+    for p in perturbations:
+        variant = dict(original)
+        for key, value in p.items():
+            if key in original:
+                variant[key] = value
+        variants.append(variant)
+        desc = "; ".join(f"{k}:{original.get(k, '?')}->{p[k]}" for k in p)
+        labels.append(desc)
+
+    results = interpret_predictions_batch(model, scaler, features, variants, cov_beta)
+    if isinstance(results, dict) and "error" in results:
+        return results
+
+    original_result = results[0]
+    perturbation_results = []
+    for i in range(1, len(results)):
+        r = results[i]
+        risk_reduction = round(original_result["riskScore"] - r["riskScore"], 1)
+        perturbation_results.append({
+            "delta": labels[i],
+            "riskScore": r["riskScore"],
+            "riskCategory": r["riskCategory"],
+            "factors": r.get("factors", []),
+            "riskReduction": risk_reduction,
+            "confidenceInterval": r.get("confidenceInterval"),
+            "modelConfidence": r.get("modelConfidence"),
+        })
+
+    perturbation_results.sort(key=lambda x: x["riskReduction"], reverse=True)
+
+    return {
+        "original": original_result,
+        "perturbations": perturbation_results,
+        "ranked": perturbation_results,
+    }
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "predict_file":
@@ -712,11 +760,15 @@ if __name__ == "__main__":
         else:
             result = interpret_prediction(model, scaler, features, data, cov_beta)
             print(json.dumps(result))
-    elif len(sys.argv) > 1 and sys.argv[1] == "train_and_evaluate":
-        if not os.path.exists(DATA_FILE):
-            print("Dataset not found. Creating synthetic dataset...", file=sys.stderr)
-            create_synthetic_data()
-        train_and_evaluate()
+    elif len(sys.argv) > 1 and sys.argv[1] == "counterfactual":
+        if len(sys.argv) > 2:
+            with open(sys.argv[2], 'r') as f:
+                data = json.load(f)
+        else:
+            data = json.load(sys.stdin)
+        model, scaler, features, cov_beta = get_model()
+        result = counterfactual_analysis(model, scaler, features, data, cov_beta)
+        print(json.dumps(result))
     elif len(sys.argv) > 1 and sys.argv[1] == "train":
         if not os.path.exists(DATA_FILE):
             print("Dataset not found. Creating synthetic dataset...")
