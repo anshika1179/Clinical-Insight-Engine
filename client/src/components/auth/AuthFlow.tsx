@@ -17,6 +17,14 @@ interface AuthFlowProps {
   onSuccess?: () => void;
 }
 
+interface FieldErrors {
+  fullName?: string;
+  licenseNumber?: string;
+  email?: string;
+  password?: string;
+  confirmPassword?: string;
+}
+
 export function AuthFlow({ initialMode = "login", onSuccess }: AuthFlowProps) {
   const [, setLocation] = useLocation();
   const [mode, setMode] = useState<AuthMode>(initialMode);
@@ -28,18 +36,20 @@ export function AuthFlow({ initialMode = "login", onSuccess }: AuthFlowProps) {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [licenseNumber, setLicenseNumber] = useState("");
+  const [termsAccepted, setTermsAccepted] = useState(false);
   
   // OTP States
   const [otp, setOtp] = useState("");
   const [devOtp, setDevOtp] = useState<string | undefined>();
-  const [countdown, setCountdown] = useState(600); // 10 minutes total
-  const [resendCooldown, setResendCooldown] = useState(60); // 60 seconds before resend
+  const [countdown, setCountdown] = useState(600);
+  const [resendCooldown, setResendCooldown] = useState(60);
 
   // Forgot Password States
   const [forgotSent, setForgotSent] = useState(false);
 
   // UI States
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [isLoading, setIsLoading] = useState(false);
 
   // Timers
@@ -60,19 +70,56 @@ export function AuthFlow({ initialMode = "login", onSuccess }: AuthFlowProps) {
     return `${m}:${s}`;
   };
 
+  function setFieldError(field: keyof FieldErrors, message: string) {
+    setFieldErrors((prev) => ({ ...prev, [field]: message }));
+  }
+
+  function clearFieldError(field: keyof FieldErrors) {
+    setFieldErrors((prev) => ({ ...prev, [field]: undefined }));
+  }
+
+  function clearAllFieldErrors() {
+    setFieldErrors({});
+  }
+
+  function handleServerErrors(err: any) {
+    clearAllFieldErrors();
+    const fieldErrs = err.fieldErrors as Array<{ field: string; message: string }> | undefined;
+    if (fieldErrs && fieldErrs.length > 0) {
+      const mapped: FieldErrors = {};
+      for (const fe of fieldErrs) {
+        if (fe.field === "fullName") mapped.fullName = fe.message;
+        else if (fe.field === "licenseNumber") mapped.licenseNumber = fe.message;
+        else if (fe.field === "email") mapped.email = fe.message;
+        else if (fe.field === "password") mapped.password = fe.message;
+        else if (fe.field === "confirmPassword") mapped.confirmPassword = fe.message;
+        else if (!error) setError(fe.message);
+      }
+      setFieldErrors(mapped);
+      if (Object.keys(mapped).length === 0) {
+        setError(err.message || "Validation failed.");
+      }
+    } else {
+      setError(err.message || "Authentication failed. Please try again.");
+    }
+  }
+
   const handleAuthSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    clearAllFieldErrors();
 
-    // Validation
-    if (!email) { setError("Email is required."); return; }
-    if (!password) { setError("Password is required."); return; }
+    if (!email) { setFieldError("email", "Email is required."); return; }
+    if (!password) { setFieldError("password", "Password is required."); return; }
     
     if (mode === "register") {
-      if (!fullName) { setError("Full name is required."); return; }
-      if (!licenseNumber) { setError("Medical license number is required."); return; }
-      if (password !== confirmPassword) { setError("Passwords do not match."); return; }
-      if (password.length < 8) { setError("Password is too weak."); return; }
+      let hasError = false;
+      if (!fullName) { setFieldError("fullName", "Full name is required."); hasError = true; }
+      if (!licenseNumber) { setFieldError("licenseNumber", "Medical license number is required."); hasError = true; }
+      if (password !== confirmPassword) { setFieldError("confirmPassword", "Passwords do not match."); hasError = true; }
+      if (password.length < 8) { setFieldError("password", "Password must be at least 8 characters."); hasError = true; }
+      if (!termsAccepted) { setError("Please accept the terms and conditions to continue."); hasError = true; }
+      if (hasError) return;
     }
 
     setIsLoading(true);
@@ -90,7 +137,7 @@ export function AuthFlow({ initialMode = "login", onSuccess }: AuthFlowProps) {
       setResendCooldown(60);
       setOtp(responseData?.devOtp || "");
     } catch (err: any) {
-      setError(err.message || "Authentication failed. Please try again.");
+      handleServerErrors(err);
     } finally {
       setIsLoading(false);
     }
@@ -158,7 +205,7 @@ export function AuthFlow({ initialMode = "login", onSuccess }: AuthFlowProps) {
 
   const handleForgotPassword = async (e: FormEvent) => {
     e.preventDefault();
-    if (!email) { setError("Please enter your email address."); return; }
+    if (!email) { setFieldError("email", "Please enter your email address."); return; }
     
     setError(null);
     setIsLoading(true);
@@ -174,9 +221,58 @@ export function AuthFlow({ initialMode = "login", onSuccess }: AuthFlowProps) {
 
   const switchMode = (newMode: AuthMode) => {
     setError(null);
+    clearAllFieldErrors();
     setMode(newMode);
     setStep("form");
   };
+
+  function StepIndicator({ currentStep }: { currentStep: Step }) {
+    const steps = [
+      { key: "form", label: mode === "register" ? "Create Account" : "Sign In" },
+      { key: "otp", label: "Verify Email" },
+    ];
+    const activeIdx = steps.findIndex((s) => s.key === currentStep);
+    return (
+      <div className="mb-8">
+        <div className="flex items-center justify-center gap-2">
+          {steps.map((s, i) => (
+            <div key={s.key} className="flex items-center gap-2">
+              <div
+                className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold transition-colors ${
+                  i <= activeIdx
+                    ? "bg-blue-600 text-white"
+                    : "bg-slate-200 text-slate-400 dark:bg-slate-700 dark:text-slate-500"
+                }`}
+              >
+                {i < activeIdx ? (
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : (
+                  i + 1
+                )}
+              </div>
+              {i < steps.length - 1 && (
+                <div className={`h-0.5 w-8 sm:w-12 transition-colors ${i < activeIdx ? "bg-blue-600" : "bg-slate-200 dark:bg-slate-700"}`} />
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="mt-2 flex justify-center gap-8 sm:gap-12">
+          {steps.map((s, i) => (
+            <span
+              key={s.key}
+              className={`text-xs font-medium transition-colors ${
+                i === activeIdx ? "text-blue-600 dark:text-blue-400" : "text-slate-400 dark:text-slate-500"
+              }`}
+            >
+              {s.label}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   // -------------------------------------------------------------
   // Render: Forgot Password Step
@@ -213,8 +309,9 @@ export function AuthFlow({ initialMode = "login", onSuccess }: AuthFlowProps) {
                 label="Email Address"
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => { setEmail(e.target.value); clearFieldError("email"); }}
                 placeholder="clinician@clinic.com"
+                error={fieldErrors.email}
                 required
               />
               
@@ -245,6 +342,7 @@ export function AuthFlow({ initialMode = "login", onSuccess }: AuthFlowProps) {
     return (
       <AuthLayout>
         <AuthCard title="Verify Your Email" subtitle="We've sent a secure verification code to your email address.">
+          <StepIndicator currentStep={step} />
           <form onSubmit={handleOtpVerify}>
             {error && <div className="mb-6 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/30 dark:text-red-400">{error}</div>}
             {devOtp && (
@@ -296,6 +394,7 @@ export function AuthFlow({ initialMode = "login", onSuccess }: AuthFlowProps) {
   return (
     <AuthLayout>
       <AuthCard title={mode === "login" ? "Sign In" : "Create Account"}>
+        {mode === "register" && <StepIndicator currentStep={step} />}
         <form onSubmit={handleAuthSubmit}>
           {error && <div className="mb-6 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/30 dark:text-red-400">{error}</div>}
 
@@ -304,17 +403,22 @@ export function AuthFlow({ initialMode = "login", onSuccess }: AuthFlowProps) {
               <FormField
                 label="Full Name"
                 value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
+                onChange={(e) => { setFullName(e.target.value); clearFieldError("fullName"); }}
                 placeholder="Dr. Maya Patel"
+                error={fieldErrors.fullName}
                 required
               />
               <FormField
                 label="Medical License Number / NPI"
                 value={licenseNumber}
-                onChange={(e) => setLicenseNumber(e.target.value)}
+                onChange={(e) => { setLicenseNumber(e.target.value); clearFieldError("licenseNumber"); }}
                 placeholder="NPI-1234567890"
+                error={fieldErrors.licenseNumber}
                 required
               />
+              <p className="-mt-3 mb-5 text-xs text-slate-400 dark:text-slate-500">
+                Enter your National Provider Identifier (NPI) or medical license number.
+              </p>
             </>
           )}
 
@@ -322,8 +426,9 @@ export function AuthFlow({ initialMode = "login", onSuccess }: AuthFlowProps) {
             label="Email Address"
             type="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => { setEmail(e.target.value); clearFieldError("email"); }}
             placeholder="clinician@clinic.com"
+            error={fieldErrors.email}
             required
           />
 
@@ -331,8 +436,9 @@ export function AuthFlow({ initialMode = "login", onSuccess }: AuthFlowProps) {
             label="Password"
             type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => { setPassword(e.target.value); clearFieldError("password"); }}
             placeholder="••••••••"
+            error={fieldErrors.password}
             required
           />
 
@@ -344,16 +450,37 @@ export function AuthFlow({ initialMode = "login", onSuccess }: AuthFlowProps) {
                   label="Confirm Password"
                   type="password"
                   value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  onChange={(e) => { setConfirmPassword(e.target.value); clearFieldError("confirmPassword"); }}
                   placeholder="••••••••"
+                  error={fieldErrors.confirmPassword}
                   required
                   className="!mb-1"
                 />
-                {confirmPassword && (
+                {confirmPassword && !fieldErrors.confirmPassword && (
                   <p className={`text-xs ${password === confirmPassword ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}`}>
                     {password === confirmPassword ? "Passwords match" : "Passwords do not match"}
                   </p>
                 )}
+              </div>
+              <div className="mt-5">
+                <label className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-400">
+                  <input
+                    type="checkbox"
+                    checked={termsAccepted}
+                    onChange={(e) => setTermsAccepted(e.target.checked)}
+                    className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-900"
+                  />
+                  <span>
+                    I accept the{" "}
+                    <a href="#" className="font-semibold text-blue-600 hover:underline dark:text-blue-400" onClick={(e) => e.preventDefault()}>
+                      Terms of Service
+                    </a>{" "}
+                    and{" "}
+                    <a href="#" className="font-semibold text-blue-600 hover:underline dark:text-blue-400" onClick={(e) => e.preventDefault()}>
+                      Privacy Policy
+                    </a>
+                  </span>
+                </label>
               </div>
             </div>
           )}
@@ -378,7 +505,7 @@ export function AuthFlow({ initialMode = "login", onSuccess }: AuthFlowProps) {
             type="submit"
             isLoading={isLoading}
             loadingText={mode === "login" ? "Signing In..." : "Creating Account..."}
-            disabled={mode === "register" && (password !== confirmPassword || password.length < 8)}
+            disabled={mode === "register" && (password !== confirmPassword || password.length < 8 || !termsAccepted)}
           >
             {mode === "login" ? "Sign In" : "Create Account"}
           </AuthButton>

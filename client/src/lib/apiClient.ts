@@ -9,9 +9,11 @@ export class ApiClient {
   private static async handleResponse<T>(res: Response): Promise<T> {
     if (!res.ok) {
       let errorMessage = res.statusText;
+      let errors: Array<{ field: string; message: string }> | undefined;
       try {
         const errorData = await res.json();
         errorMessage = errorData.message || errorMessage;
+        errors = errorData.errors;
       } catch (err) {
         try {
           const text = await res.text();
@@ -22,6 +24,7 @@ export class ApiClient {
       }
       const error = new Error(`${res.status}: ${errorMessage}`);
       (error as any).status = res.status;
+      (error as any).fieldErrors = errors;
       throw error;
     }
 

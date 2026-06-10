@@ -19,7 +19,7 @@ const patientAuthLimiter = rateLimit({
 const registerSchema = z.object({
   patientName: z.string().trim().min(1, "Patient name is required"),
   email: z.string().email("Valid email is required"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
   phone: z.string().optional(),
 });
 
