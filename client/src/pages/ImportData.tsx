@@ -39,7 +39,7 @@ const SAMPLE_CSV_ROWS = [
 ];
 
 function downloadSampleCSV() {
-  const blob = new Blob([SAMPLE_CSV_ROWS.join("\n")], { type: "text/csv" });
+  const blob = new Blob([SAMPLE_CSV_ROWS.join("\\n")], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url; a.download = "sample_patient_data.csv"; a.click();
