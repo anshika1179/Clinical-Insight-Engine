@@ -183,6 +183,7 @@ export class AssessmentRepository {
           createdAt: (assessments as any).createdAt ?? (assessments as any).created_at,
           createdBy: (assessments as any).createdBy ?? (assessments as any).created_by,
           userId: (assessments as any).userId ?? (assessments as any).user_id,
+          ownerId: assessments.ownerId,
         })
         .from(assessments)
         .orderBy(desc(assessments.id))
@@ -227,6 +228,7 @@ export class AssessmentRepository {
         createdAt: (assessments as any).createdAt ?? (assessments as any).created_at,
         createdBy: (assessments as any).createdBy ?? (assessments as any).created_by,
         userId: (assessments as any).userId ?? (assessments as any).user_id,
+        ownerId: assessments.ownerId,
       })
       .from(assessments)
       .orderBy(orderByClause, desc(assessments.id))
@@ -274,10 +276,10 @@ export class AssessmentRepository {
       const pattern = `%${searchTerm.trim()}%`;
       conditions.push(
         or(
+          ilike(assessments.patientName, pattern),
           ilike(assessments.gender, pattern),
           ilike(assessments.smokingHistory, pattern),
-          ilike(assessments.riskCategory, pattern),
-          ilike(assessments.patientName, pattern)
+          ilike(assessments.riskCategory, pattern)
         ) as ReturnType<typeof eq>
       );
     }
@@ -351,6 +353,45 @@ export class AssessmentRepository {
       .limit(limit);
 
     return rows.map((r) => r.patientName).filter(Boolean) as string[];
+  }
+
+  async getAssessmentsByPatientName(
+    patientName: string,
+    limit: number = 20,
+    offset: number = 0
+  ): Promise<{ data: Assessment[]; total: number }> {
+    const db = getDb();
+    const [countResult] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(assessments)
+      .where(eq(assessments.patientName, patientName));
+    const total = Number(countResult?.count ?? 0);
+    const data = await db
+      .select()
+      .from(assessments)
+      .where(eq(assessments.patientName, patientName))
+      .orderBy(desc(assessments.createdAt))
+      .limit(limit)
+      .offset(offset);
+    return { data, total };
+  }
+
+  async getPatientTrends(patientName: string): Promise<{ date: string; riskScore: number; riskCategory: string }[]> {
+    const db = getDb();
+    const rows = await db
+      .select({
+        date: assessments.createdAt,
+        riskScore: assessments.riskScore,
+        riskCategory: assessments.riskCategory,
+      })
+      .from(assessments)
+      .where(eq(assessments.patientName, patientName))
+      .orderBy(asc(assessments.createdAt));
+    return rows.map((r) => ({
+      date: r.date?.toISOString() ?? "",
+      riskScore: r.riskScore,
+      riskCategory: r.riskCategory,
+    }));
   }
 
   async deleteAssessment(id: number): Promise<void> {
