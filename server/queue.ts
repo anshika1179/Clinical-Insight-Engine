@@ -1,7 +1,7 @@
 import { Queue, Worker, Job } from "bullmq";
 import { storage } from "./storage";
 import IORedis from "ioredis";
-import { execFile } from "child_process";
+import { safeExecFile } from "./utils/exec";
 import { promisify } from "util";
 import path from "path";
 import os from "os";
@@ -30,7 +30,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const analyzePyPath = path.resolve(__dirname, "..", "analyze.py");
 
-const execFileAsync = promisify(execFile);
+
 
 let redisConnectionInstance: IORedis | null = null;
 let assessmentQueueInstance: Queue | null = null;
@@ -110,7 +110,7 @@ export function startAssessmentWorker(): void {
       try {
         await writeFile(tempFile, JSON.stringify(input));
         const stdout = await new Promise<string>((resolve, reject) => {
-          const child = execFile(
+          const child = safeExecFile(
             getPythonExecutable(),
             [analyzePyPath, "predict_file", tempFile],
             {

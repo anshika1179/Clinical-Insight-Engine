@@ -1,9 +1,10 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
-const { mockInfo, mockWarn, mockError } = vi.hoisted(() => ({
+const { mockInfo, mockWarn, mockError, mockSend } = vi.hoisted(() => ({
   mockInfo: vi.fn(),
   mockWarn: vi.fn(),
   mockError: vi.fn(),
+  mockSend: vi.fn(),
 }));
 
 vi.mock("./logger", () => ({
@@ -49,7 +50,7 @@ describe("sendVerificationCode", () => {
       const sent = await sendVerificationEmail("test@example.com", "123456");
       expect(sent).toBe(false);
       const loggedOutput = mockInfo.mock.calls.map((call: any) => JSON.stringify(call)).join(" ");
-      expect(loggedOutput).not.toContain("EMAIL VERIFICATION");
+      expect(loggedOutput).not.toContain("123456");
     } finally {
       process.env.NODE_ENV = originalEnv;
       delete process.env.RESEND_API_KEY;
@@ -64,13 +65,13 @@ describe("sendVerificationCode", () => {
       expect(sent).toBe(true);
       const loggedOutput = mockInfo.mock.calls.map((call: any) => JSON.stringify(call)).join(" ");
       expect(loggedOutput).toContain("123456");
-      expect(loggedOutput).toContain("EMAIL VERIFICATION");
+      expect(loggedOutput).toContain("EMAIL VERIFICATION OTP");
     } finally {
       process.env.NODE_ENV = originalEnv;
     }
   });
 
-  it("returns false in production when SMTP send fails", async () => {
+  it("returns false in production when Resend send fails", async () => {
     const originalEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";
     process.env.RESEND_API_KEY = "re_test_key";
@@ -86,7 +87,7 @@ describe("sendVerificationCode", () => {
     }
   });
 
-  it("returns true in production when SMTP send succeeds", async () => {
+  it("returns true in production when Resend send succeeds", async () => {
     const originalEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";
     process.env.RESEND_API_KEY = "re_test_key";
@@ -149,7 +150,7 @@ describe("sendCriticalRiskAlert", () => {
   });
 });
 
-describe("validateSmtpConfig", () => {
+describe("validateEmailConfig", () => {
   const originalEnv = process.env.NODE_ENV;
 
   afterEach(() => {
@@ -162,12 +163,12 @@ describe("validateSmtpConfig", () => {
     expect(() => validateEmailConfig()).not.toThrow();
   });
 
-  it("throws EmailConfigurationError when production SMTP vars are missing", () => {
+  it("throws EmailConfigurationError when production Resend key is missing", () => {
     process.env.NODE_ENV = "production";
     expect(() => validateEmailConfig()).toThrow(EmailConfigurationError);
   });
 
-  it("does not throw in production when all SMTP vars are set", () => {
+  it("does not throw in production when Resend key is set", () => {
     process.env.NODE_ENV = "production";
     process.env.RESEND_API_KEY = "re_test_key";
     expect(() => validateEmailConfig()).not.toThrow();
