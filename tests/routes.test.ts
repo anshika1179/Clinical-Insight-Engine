@@ -455,25 +455,21 @@ describe("Python inference", () => {
 
     const predictSpy = vi.spyOn(pythonDaemon, "predictBatch").mockRejectedValue(new Error("Python execution failed"));
 
-    try {
-      const res = await request(app)
-        .post("/api/assessments/bulk")
-        .send({
-          assessments: [
-            validPayload,
-            { ...validPayload, patientName: "Jane Doe" }
-          ]
-        });
+    const res = await request(app)
+      .post("/api/assessments/bulk")
+      .send({
+        assessments: [
+          validPayload,
+          { ...validPayload, patientName: "Jane Doe" }
+        ]
+      });
 
-      expect(res.status).toBe(201);
-      expect(res.body).toHaveProperty("count", 2);
-      expect(res.body).toHaveProperty("assessments");
-      expect(Array.isArray(res.body.assessments)).toBe(true);
-      expect(res.body.assessments[0]).toHaveProperty("riskScore");
-      expect(res.body.assessments[1]).toHaveProperty("riskScore");
-    } finally {
-      predictSpy.mockRestore();
-    }
+    expect(res.status).toBe(201);
+    expect(res.body).toHaveProperty("count", 2);
+    expect(res.body).toHaveProperty("assessments");
+    expect(Array.isArray(res.body.assessments)).toBe(true);
+    expect(res.body.assessments[0]).toHaveProperty("riskScore");
+    expect(res.body.assessments[1]).toHaveProperty("riskScore");
   });
 
   it("bulk route returns 201 and falls back to rule-based model on python process timeout", async () => {

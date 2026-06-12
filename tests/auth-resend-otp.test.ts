@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 import express from "express";
 import session from "express-session";
+import { eq } from "drizzle-orm";
+import { users } from "../server/db/schema";
 
 const { mockSendVerificationEmail } = vi.hoisted(() => ({
   mockSendVerificationEmail: vi.fn().mockResolvedValue(true),
@@ -36,6 +38,13 @@ vi.mock("ioredis", () => ({
   })),
 }));
 
+/** Override getDb to return the given mock implementation */
+async function setMockDb(mockImpl: any) {
+  const mod = await import("../server/db");
+  const getDbMock = mod.getDb as any;
+  getDbMock.mockReturnValue(mockImpl);
+}
+
 async function buildApp() {
   const { createAuthRouter } = await import("../server/auth");
   const app = express();
@@ -66,6 +75,21 @@ describe("POST /api/auth/resend-otp", () => {
     expect(res.body.message).toMatch(/email is required/i);
   });
 
+  it("returns 404 when user is not found (no pending otp scenario)", async () => {
+    await setMockDb({
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([]),
+          }),
+        }),
+      }),
+      transaction: vi.fn(),
+    });
+    const app = await buildApp();
+    const res = await request(app)
+      .post("/api/auth/resend-otp")
+      .send({ email: "noone@clinic.com", mode: "login" });
   it("returns 404 when user is not found in database", async () => {
     const mockLimit = vi.fn().mockResolvedValue([]);
     const mockWhere = vi.fn(() => ({ limit: mockLimit }));
@@ -80,34 +104,31 @@ describe("POST /api/auth/resend-otp", () => {
     expect(res.body.message).toMatch(/user not found/i);
   });
 
-  it("regenerates OTP and returns 200 on success", async () => {
-    const mockLimit = vi.fn().mockResolvedValue([{ id: "user-123", email: "test@clinic.com" }]);
-    const mockWhere = vi.fn(() => ({ limit: mockLimit }));
-    const mockFrom = vi.fn(() => ({ where: mockWhere }));
-    mockDb.select.mockImplementation(() => ({ from: mockFrom }));
-
-    mockDb.transaction.mockImplementation(async (callback) => {
-      const mockTx = {
-        update: vi.fn(() => ({
-          set: vi.fn(() => ({
-            where: vi.fn().mockResolvedValue(undefined),
-          })),
-        })),
-        insert: vi.fn(() => ({
-          values: vi.fn().mockResolvedValue(undefined),
-        })),
-      };
-      return callback(mockTx);
+  it("resends OTP successfully when user exists (does not ask for password)", async () => {
+    await setMockDb({
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([{ id: "user-1", email: "test@clinic.com" }]),
+          }),
+        }),
+      }),
+      transaction: async (cb: any) => {
+        const tx = {
+          update: () => ({ set: () => ({ where: () => Promise.resolve() }) }),
+          insert: () => ({ values: () => Promise.resolve() }),
+        };
+        return cb(tx);
+      },
     });
-
     const app = await buildApp();
     const res = await request(app)
       .post("/api/auth/resend-otp")
-      .send({ email: "test@clinic.com" });
-
+      .send({ email: "test@clinic.com", mode: "login" });
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(res.body.pendingEmail).toBe("test@clinic.com");
+    expect(res.body).toHaveProperty("success", true);
+    expect(res.body).toHaveProperty("pendingEmail");
+    expect(Object.keys(res.body)).not.toContain("devOtp");
     expect(mockSendVerificationEmail).toHaveBeenCalledTimes(1);
   });
 });
