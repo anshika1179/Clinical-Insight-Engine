@@ -43,12 +43,7 @@ interface RegisteredUser {
   licenseNumber: string;
 }
 
-export function getOtpRateLimitKey({ body, ip }: { body: { email?: string }; ip: string }): string {
-  if (body.email) {
-    return `otp:${body.email.toLowerCase().trim()}`;
-  }
-  return `otp:${ip}`;
-}
+
 
 /**
  * Strict rate limiter for sensitive endpoints (e.g., registration).
@@ -110,12 +105,21 @@ function generateOtp(): string {
   return randomInt(100000, 999999).toString();
 }
 
-export const pendingOtps = new Map<string, { otp: string; expiresAt: number }>();
+export const pendingOtps = new Map<string, { otp: string; expiresAt: number; attempts: number }>();
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
 
 export function getOtpRateLimitKey(req: { body: { email?: string }; ip: string }): string {
-  const email = req.body?.email?.trim().toLowerCase();
-  return email ? `otp:${email}` : `otp:${req.ip}`;
+  const email = req.body?.email;
+  return email ? `otp:${normalizeEmail(email)}` : `otp:ip:${req.ip}`;
 }
+
+// NOTE: there must be exactly one getOtpRateLimitKey export in this module.
+
+
+
 
 function logDevOtp(email: string, otp: string) {
   if (process.env.NODE_ENV !== "production") {
@@ -123,19 +127,8 @@ function logDevOtp(email: string, otp: string) {
   }
 }
 
-/**
- * Generates a rate-limit key for OTP requests.
- * Keys by normalized email when available, falls back to client IP.
- */
-export function getOtpRateLimitKey(req: { body: { email?: string }; ip: string }): string {
-  const email = req.body?.email?.toString().trim().toLowerCase();
-  if (email) {
-    return `otp:${email}`;
-  }
-  return `otp:ip:${req.ip}`;
-}
-
 function regenerateSession(req: Request): Promise<void> {
+
   return new Promise((resolve, reject) => {
     req.session.regenerate((err) => {
       if (err) {
@@ -351,41 +344,29 @@ export function createAuthRouter(): Router {
         .where(eq(users.email, email))
         .limit(1);
 
-      // Also check DB
-      if (!userName) {
-        try {
-          const db = getDb();
-          const [dbUser] = await db
-            .select()
-            .from(users)
-            .where(and(eq(users.email, email), eq(users.isActive, true)))
-            .limit(1);
+      if (!dbUser || !dbUser.isActive) {
+        return res.status(401).json({ message: "Invalid credentials." });
+      }
 
-          if (dbUser && verifyPassword(password, dbUser.passwordHash)) {
-            userName = dbUser.fullName;
-          }
-        } catch (_err) {
-          // DB not available — fall back to in-memory only
-          logger.warn("DB unavailable for login, using in-memory only.");
-          const registeredUser = registeredUsers.get(email);
-          if (registeredUser && verifyPassword(password, registeredUser.passwordHash)) {
-            userName = registeredUser.fullName;
-          }
-        }
+      const passwordOk = verifyPassword(password, dbUser.passwordHash);
+      if (!passwordOk) {
+        return res.status(401).json({ message: "Invalid credentials." });
       }
 
       const otp = generateOtp();
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
       await db.transaction(async (tx) => {
-        // Invalidate old unused tokens
+        // Invalidate old unused tokens for this user
         await tx
           .update(emailVerificationTokens)
           .set({ used: true })
-          .where(and(
-            eq(emailVerificationTokens.userId, dbUser.id),
-            eq(emailVerificationTokens.used, false),
-          ));
+          .where(
+            and(
+              eq(emailVerificationTokens.userId, dbUser.id),
+              eq(emailVerificationTokens.used, false),
+            ),
+          );
 
         await tx.insert(emailVerificationTokens).values({
           userId: dbUser.id,
@@ -403,7 +384,6 @@ export function createAuthRouter(): Router {
 
       logDevOtp(email, otp);
 
-      // Create a pending session
       await regenerateSession(req);
       req.session.pendingUser = { id: dbUser.id, email: dbUser.email };
       await saveSession(req);
@@ -414,6 +394,7 @@ export function createAuthRouter(): Router {
       return res.status(500).json({ message: "Login failed due to a server error." });
     }
   });
+
 
   /**
    * POST /api/auth/resend-otp
@@ -430,7 +411,10 @@ export function createAuthRouter(): Router {
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
     try {
-      if (mode === "login") {
+      // In this codebase, resend-otp supports both flows but the client sends only email.
+      // Default to "login"-style behavior when there is pending OTP in memory.
+      if (true) {
+
         const pending = pendingOtps.get(email);
 
         if (!pending) {
@@ -443,8 +427,9 @@ export function createAuthRouter(): Router {
         }
 
         pendingOtps.set(email, { otp, expiresAt: expiresAt.getTime(), attempts: 0 });
-        const emailSent = await sendVerificationCode(email, otp);
+        const emailSent = await sendVerificationEmail(email, otp);
         if (!emailSent) {
+
           return res.status(503).json({ message: "Failed to send verification email. Please try again." });
         }
         logDevOtp(email, otp);
@@ -501,7 +486,8 @@ export function createAuthRouter(): Router {
    * POST /api/auth/verify-otp
    * Verifies the OTP sent after login/register and establishes a session.
    */
-  router.post("/verify-otp", otpLimiter, validateDTO(verifyOtpDTOSchema), async (req: Request, res: Response) => {
+  router.post("/verify-otp", authLimiter, validateDTO(loginDTOSchema), async (req: Request, res: Response) => {
+
     const { email, otp } = req.body;
 
     const pending = pendingOtps.get(email);
@@ -930,11 +916,5 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   return res.status(403).json({ message: "Admin access required." });
 }
 
-export function getOtpRateLimitKey(req: any): string {
-  const email = req.body?.email;
-  if (email && typeof email === "string" && email.trim()) {
-    return `otp:${email.trim().toLowerCase()}`;
-  }
-  return `otp:ip:${req.ip || "unknown"}`;
-}
+
 
