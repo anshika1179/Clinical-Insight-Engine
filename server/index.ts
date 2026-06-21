@@ -131,9 +131,9 @@ app.use((_req, res, next) => {
   next();
 });
 
-const scriptSrcDirective: Array<string | ((req: Request, res: Response) => string)> = [
+const scriptSrcDirective: any[] = [
   "'self'",
-  (_req: any, res: Response) => `'nonce-${res.locals.cspNonce}'`,
+  (_req: any, res: any) => `'nonce-${res.locals.cspNonce}'`,
 ];
 
 
