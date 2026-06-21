@@ -17,17 +17,17 @@ const upload = multer({
   limits: {
     fileSize: 5 * 1024 * 1024, // 5MB
   },
-  fileFilter: (req: Parameters<RequestHandler>[0], file: unknown, cb: unknown) => {
+  fileFilter: (req: any, file: unknown, cb: unknown) => {
     // HARDENING: Restrict to ONLY CSV files to prevent upload of executable or unwanted MIME types
     const allowedMimeTypes = ["text/csv"];
     const allowedExtensions = [".csv"];
     
-    const ext = path.extname(file.originalname).toLowerCase();
+    const ext = path.extname((file as any).originalname).toLowerCase();
     
-    if (allowedMimeTypes.includes(file.mimetype) && allowedExtensions.includes(ext)) {
-      cb(null, true);
+    if (allowedMimeTypes.includes((file as any).mimetype) && allowedExtensions.includes(ext)) {
+      (cb as any)(null, true);
     } else {
-      cb(new Error("Invalid file type. Only CSV files are allowed."));
+      (cb as any)(new Error("Invalid file type. Only CSV files are allowed."));
     }
   }
 });

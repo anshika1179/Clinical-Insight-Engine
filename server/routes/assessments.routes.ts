@@ -7,6 +7,7 @@ import { requireAuth, requireVerified } from "../auth";
 import { api } from "@shared/routes";
 import { storage } from "../storage";
 import { MLService, isPythonAvailable, calculateClinicalFallback, type PredictionResult } from "../services/mlService";
+import { sanitizeHtml } from "../utils/sanitize";
 
 
 import { generateRecommendations } from "../services/recommendation-engine";
@@ -103,7 +104,7 @@ assessmentsRouter.post(
           const variant = { ...original, ...p };
           const variantResult = calculateClinicalFallback(variant) as PredictionResult;
           const riskReduction = originalResult.riskScore - variantResult.riskScore;
-          const desc = Object.keys(p).map(k => `${k}:${(original)[k] ?? '?'}->${(p)[k]}`).join("; ");
+          const desc = Object.keys(p).map(k => `${k}:${(original as any)[k] ?? '?'}->${(p as any)[k]}`).join("; ");
           return {
             delta: desc,
             riskScore: variantResult.riskScore,
@@ -292,8 +293,8 @@ assessmentsRouter.post(
         }
 
         logger.warn(
-          "Python prediction simulation failed, falling back to clinical rule-based model:",
-          error
+          { err: error },
+          "Python prediction simulation failed, falling back to clinical rule-based model:"
         );
         prediction = calculateClinicalFallback(input);
       }
@@ -537,6 +538,59 @@ assessmentsRouter.get(
       logger.error({ err }, "Assessment fetch error:");
       const { statusCode, message } = sanitizeDatabaseError(err);
       return res.status(statusCode).json({ message });
+    }
+  }
+);
+
+assessmentsRouter.patch(
+  "/:id/note",
+  requireAuth,
+  requireVerified,
+  async (req, res) => {
+    try {
+      const id = parseInt(req.params.id as string, 10);
+      if (isNaN(id) || id <= 0) {
+        return res.status(400).json({ message: "Invalid assessment ID." });
+      }
+
+      const user = req.session.user;
+      if (!user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const assessment = await storage.getAssessmentById(id);
+      if (!assessment) {
+        return res.status(404).json({ message: "Assessment not found." });
+      }
+
+      if (!canAccessPatientRecord(user, assessment)) {
+        logAccessAttempt(
+          user.id,
+          "Assessment",
+          id,
+          false,
+          "IDOR attempt: User not authorized to edit notes on this patient record"
+        );
+        return res.status(403).json({ message: "Forbidden" });
+      }
+
+      const { clinicalNote } = req.body;
+      if (typeof clinicalNote !== "string") {
+        return res.status(400).json({ message: "clinicalNote must be a string." });
+      }
+
+      const sanitized = sanitizeHtml(clinicalNote);
+
+      const updated = await storage.updateClinicalNote(id, sanitized);
+      if (!updated) {
+        return res.status(500).json({ message: "Failed to update clinical note." });
+      }
+
+      logAccessAttempt(user.id, "Assessment", id, true, "Clinical note updated");
+      return res.json({ clinicalNote: updated.clinicalNote });
+    } catch (err) {
+      logger.error({ err }, "Clinical note update error:");
+      return res.status(500).json({ message: "Failed to update clinical note." });
     }
   }
 );
