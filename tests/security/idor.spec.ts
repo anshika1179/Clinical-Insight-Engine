@@ -1,91 +1,52 @@
-/**
- * idOR.spec.ts
- *
- * Security tests for Insecure Direct Object Reference (IDOR) on Patient Records (Issue #440).
- * Ensures Object-Level Authorization is enforced correctly across different roles.
- */
+import { canAccessPatientRecord } from '../server/services/authz/patient-access';
+import { logAccessAttempt } from '../server/security/access-audit';
 
-import { describe, expect, it } from "vitest";
-import { canAccessPatientRecord } from "../../server/services/authz/patient-access";
-import { logAccessAttempt } from "../../server/security/access-audit";
-import { ROLES } from "../../server/services/authz/rbac";
+enum UserRole {
+  ADMIN = 'admin',
+  PROVIDER = 'provider',
+  PATIENT = 'patient',
+}
 
-describe("Patient Record Authorization (IDOR Prevention)", () => {
-  
-  const mockRecord = {
-    id: 1042,
-    createdBy: "doctor_a@example.com",
-    userId: "patient-uuid-123",
-  };
+describe('Patient Access Authorization Tests', () => {
+  describe('canAccessPatientRecord', () => {
+    const adminUser = { id: 1, role: UserRole.ADMIN, email: 'admin@test.com' };
+    const providerUser = { id: 2, role: UserRole.PROVIDER, email: 'provider@test.com' };
+    const patientUser = { id: 3, role: UserRole.PATIENT, email: 'patient@test.com' };
 
-  it("Scenario 1: Assigned doctor accesses patient -> Success", () => {
-    const user = {
-      id: "doc-uuid-1",
-      email: "doctor_a@example.com",
-      role: ROLES.PROVIDER,
-    };
-    
-    const granted = canAccessPatientRecord(user, mockRecord);
-    expect(granted).toBe(true);
+    const adminRecord = { id: 1, createdBy: 'admin@test.com', doctorId: 1, patientId: 1 };
+    const providerRecord = { id: 2, createdBy: 'provider@test.com', doctorId: 2, patientId: 3 };
+    const patientRecord = { id: 3, createdBy: 'other@test.com', doctorId: 3, patientId: 3 };
+
+    test('admin can access any record', () => {
+      expect(canAccessPatientRecord(adminUser, adminRecord)).toBe(true);
+      expect(canAccessPatientRecord(adminUser, providerRecord)).toBe(true);
+      expect(canAccessPatientRecord(adminUser, patientRecord)).toBe(true);
+    });
+
+    test('provider can access records they created or they doctor', () => {
+      expect(canAccessPatientRecord(providerUser, adminRecord)).toBe(false);
+      expect(canAccessPatientRecord(providerUser, providerRecord)).toBe(true);
+      expect(canAccessPatientRecord(providerUser, patientRecord)).toBe(false);
+    });
+
+    test('patient can only access their own record', () => {
+      expect(canAccessPatientRecord(patientUser, adminRecord)).toBe(false);
+      expect(canAccessPatientRecord(patientUser, providerRecord)).toBe(false);
+      expect(canAccessPatientRecord(patientUser, patientRecord)).toBe(true);
+    });
   });
 
-  it("Scenario 2: Administrator accesses patient -> Success", () => {
-    const adminUser = {
-      id: "admin-uuid",
-      email: "admin@example.com",
-      role: ROLES.ADMIN,
-    };
-    
-    const granted = canAccessPatientRecord(adminUser, mockRecord);
-    expect(granted).toBe(true);
-  });
+  describe('logAccessAttempt', () => {
+    test('logs access attempt successfully', async () => {
+      const mockLog = jest.spyOn(require('../server/storage').storage, 'logAccessAttempt');
+      await logAccessAttempt(1, 'Assessment', 1, true, 'Authorized access');
+      expect(mockLog).toHaveBeenCalledWith(1, 'Assessment', 1, true, 'Authorized access');
+    });
 
-  it("Scenario 3: Unrelated doctor accesses patient -> Denied", () => {
-    const unrelatedDoctor = {
-      id: "doc-uuid-2",
-      email: "doctor_b@example.com",
-      role: ROLES.PROVIDER,
-    };
-    
-    const granted = canAccessPatientRecord(unrelatedDoctor, mockRecord);
-    expect(granted).toBe(false);
-  });
-
-  it("Scenario 4: Random authenticated user -> Denied", () => {
-    const randomUser = {
-      id: "random-uuid",
-      email: "hacker@example.com",
-      role: "PATIENT", // Or any unrelated role
-    };
-    
-    const granted = canAccessPatientRecord(randomUser, mockRecord);
-    expect(granted).toBe(false);
-  });
-
-  it("Patient accesses their own record -> Success", () => {
-    const patientUser = {
-      id: "patient-uuid-123",
-      email: "patient@example.com",
-      role: "PATIENT",
-    };
-    
-    const granted = canAccessPatientRecord(patientUser, mockRecord);
-    expect(granted).toBe(true);
-  });
-});
-
-describe("Access Audit Logging", () => {
-  it("Scenario 5: Patient ID enumeration attempt logs correctly without crashing", () => {
-    // We just ensure the logger executes without throwing.
-    // In a real environment, this goes to stdout/stderr.
-    expect(() => {
-      logAccessAttempt(
-        "hacker-uuid",
-        "Assessment",
-        1045,
-        false,
-        "IDOR attempt: User not authorized to access this patient record"
-      );
-    }).not.toThrow();
+    test('handles logging errors gracefully', async () => {
+      const mockLog = jest.spyOn(require('../server/storage').storage, 'logAccessAttempt');
+      mockLog.mockRejectedValue(new Error('Database error'));
+      await expect(logAccessAttempt(1, 'Assessment', 1, false, 'Unauthorized')).resolves.not.toThrow();
+    });
   });
 });
