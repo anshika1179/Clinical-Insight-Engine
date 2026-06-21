@@ -186,7 +186,7 @@ export function startAssessmentWorker(): void {
               predictions = batchPredictions;
             } catch (error) {
               logger.warn({ error }, "Batch prediction failed, using fallback");
-              predictions = calculateClinicalFallback(chunk) as PredictionResult[];
+              predictions = calculateClinicalFallback(chunk) as any[];
             }
 
             const chunkCreated = await Promise.all(
