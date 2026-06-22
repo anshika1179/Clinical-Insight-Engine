@@ -151,13 +151,19 @@ export class DatabaseStorage implements IStorage {
       createdBy: limitOrParams?.createdBy ?? createdBy,
     });
   }
+
+  async searchAssessments(
+    searchTerm: string,
+    createdBy?: string,
+    riskCategory?: RiskCategory,
+    limit: number = 20,
+    cursor?: number
+  ) {
+    return this.assessmentRepository.searchAssessments(searchTerm, createdBy, riskCategory, limit, cursor);
+  }
   
   async getAssessmentById(id: number, createdBy?: string) { 
     return this.assessmentRepository.getAssessmentById(id, createdBy); 
-  }
-
-  async getAssessmentById(id: number) {
-    return this.assessmentRepository.getAssessmentById(id);
   }
 
   async createAssessment(assessment: any) {
