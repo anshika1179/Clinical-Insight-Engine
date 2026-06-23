@@ -22,7 +22,8 @@
       "@/*": ["./client/src/*"],
       "@shared/*": ["./shared/*"],
       "@assets/*": ["./attached_assets/*"]
-    }
+    },
+    "ignoreDeprecations": "6.0"
   }
 }
 
