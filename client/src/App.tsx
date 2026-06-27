@@ -7,7 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import NotFound from "@/pages/not-found";
 import Landing from "./pages/Landing";
-import Dashboard from "./pages/Dashboard";
+import RoleRouter from "./pages/RoleRouter";
 import History from "./pages/History";
 import Analytics from "./pages/Analytics";
 import ImportData from "./pages/ImportData";
@@ -32,7 +32,7 @@ function Router() {
       <Route path="/" component={Landing} />
       <Route path="/dashboard">
         <ProtectedRoute>
-          <Dashboard />
+          <RoleRouter />
         </ProtectedRoute>
       </Route>
       <Route path="/analytics">
