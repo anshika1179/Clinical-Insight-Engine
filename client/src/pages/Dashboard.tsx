@@ -12,7 +12,9 @@ import { Activity, AlertCircle, Clock3, HeartPulse, ShieldCheck, TrendingUp, Upl
 import { api, type AssessmentPreviewResponse, type AssessmentResponse } from "@shared/routes";
 import { insertAssessmentSchema } from "@shared/schema";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
+import { SmartFhirConnect } from "@/components/SmartFhirConnect";
 import { MedicalLoader } from "@/components/ui/medical-loader";
+import { useToast } from "@/hooks/use-toast";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "react-i18next";
 import { ApiClient } from "@/lib/apiClient";
@@ -239,6 +241,19 @@ export default function Dashboard() {
             <p className="text-slate-500 dark:text-slate-400 mt-3 text-lg max-w-2xl leading-8">
               Enter patient details to run the preventive diabetes and cardiovascular risk model.
             </p>
+            <div className="mt-4">
+              <SmartFhirConnect onDataLoaded={(data) => {
+                const allowedKeys = [
+                  "patientName", "gender", "age", "hypertension", "heartDisease",
+                  "smokingHistory", "bmi", "hba1cLevel", "bloodGlucoseLevel",
+                ];
+                Object.entries(data).forEach(([k, v]) => {
+                  if (allowedKeys.includes(k) && v !== undefined && v !== null) {
+                    setValue(k as any, v as any, { shouldDirty: true, shouldValidate: true });
+                  }
+                });
+              }} />
+            </div>
           </div>
 
 <div className="grid grid-cols-1 gap-3 sm:grid-cols-4 lg:min-w-115">
