@@ -26,12 +26,14 @@
   },
   "ignorePatterns": [
     "dist/",
+    "docs/",
     "build/",
     "coverage/",
     "node_modules/",
     "docs/",
     "*.config.js",
-    "*.config.ts"
+    "*.config.ts",
+    "docs/typedoc/"
   ],
   "rules": {
     "react/react-in-jsx-scope": "off",

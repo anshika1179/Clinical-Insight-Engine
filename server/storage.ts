@@ -1,4 +1,4 @@
-import { loginAuditLogs, patientAccessAuditLogs, type Assessment, type InsertAssessment, type AssessmentFactor, type User, type InsertUser, type ModelVersion, type InsertModelVersion, type InsertPatientUser, type PatientUser } from "@shared/schema";
+import { loginAuditLogs, patientAccessAuditLogs, type Assessment, type InsertAssessment, type AssessmentFactor, type User, type InsertUser, type ModelVersion, type InsertModelVersion, type InsertPatientUser, type PatientUser, type AssessmentNote, type InsertAssessmentNote } from "@shared/schema";
 import { assessments, users } from "@shared/schema";
 
 import { getDb } from "./db";
@@ -7,7 +7,7 @@ import type { RiskCategory } from "./validation/searchValidation";
 
 import { UserRepository } from "./repositories/user.repository";
 import { AssessmentRepository } from "./repositories/assessment.repository";
-import { AuditRepository } from "./repositories/audit.repository";
+import { AuditRepository, type AuditLogFilters } from "./repositories/audit.repository";
 import { AnalyticsRepository } from "./repositories/analytics.repository";
 import { ModelVersionRepository } from "./repositories/model-version.repository";
 import { PatientUserRepository } from "./repositories/patient-user.repository";
@@ -46,15 +46,16 @@ export interface IStorage {
     limit?: number,
     cursor?: number
   ): Promise<{ data: Assessment[]; nextCursor: number | null }>;
-  getAssessmentById(id: number): Promise<Assessment | undefined>;
+  getAssessmentById(id: number, createdBy?: string): Promise<Assessment | undefined>;
   createAssessment(assessment: any): Promise<Assessment>;
+  updateClinicalNote(id: number, clinicalNote: string): Promise<Assessment | undefined>;
   deleteAssessment(id: number): Promise<void>;
   autocompletePatientNames(query: string, createdBy?: string, limit?: number): Promise<string[]>;
   createUser(data: InsertUser): Promise<User>;
   getUserByEmail(email: string): Promise<User | undefined>;
   getUserById(id: string): Promise<User | undefined>;
   getAllUsers(page: number, limit: number): Promise<{ data: User[]; total: number }>;
-  getLoginAuditLogs(page: number, limit: number): Promise<{ data: typeof loginAuditLogs.$inferSelect[]; total: number }>;
+  getLoginAuditLogs(page: number, limit: number, filters?: AuditLogFilters): Promise<{ data: typeof loginAuditLogs.$inferSelect[]; total: number }>;
   updateUser(id: string, data: Partial<Pick<User, "isActive" | "role">>): Promise<User>;
   getSystemStats(): Promise<{ totalUsers: number; totalAssessments: number; riskDistribution: { category: string; count: number }[]; }>;
   recordLoginAudit(params: { userId?: string; ipAddress?: string; userAgent?: string; loginStatus: string; }): Promise<void>;
@@ -91,12 +92,16 @@ export interface IStorage {
   getPatientUserByPatientName(patientName: string): Promise<PatientUser | undefined>;
   getPatientUserById(id: string): Promise<PatientUser | undefined>;
   createPatientUser(data: InsertPatientUser): Promise<PatientUser>;
+  updatePatientEmailVerified(id: string, verified: boolean): Promise<PatientUser>;
   getAssessmentsByPatientName(patientName: string, limit?: number, offset?: number, createdBy?: string, startDate?: string, endDate?: string): Promise<{ data: Assessment[]; total: number }>;
   getPatientTrends(patientName: string, createdBy?: string): Promise<{ date: string; riskScore: number; riskCategory: string }[]>;
   getTrendsDashboardData(patientName: string, startDate?: string, endDate?: string): Promise<{
     assessments: any[];
     summary: { total: number; latestRiskScore: number | null; latestRiskCategory: string | null; earliestRiskScore: number | null; trend: string; avgRiskScore: number; change: number };
   }>;
+  createAssessmentsBatch(data: AssessmentCreateInput[]): Promise<Assessment[]>;
+  getAssessmentNotes(assessmentId: number): Promise<(AssessmentNote & { user: { fullName: string } })[]>;
+  addAssessmentNote(note: InsertAssessmentNote): Promise<AssessmentNote & { user: { fullName: string } }>;
 }
 
 export type AssessmentCreateInput = InsertAssessment & {
@@ -154,28 +159,38 @@ export class DatabaseStorage implements IStorage {
     searchTerm: string,
     createdBy?: string,
     riskCategory?: RiskCategory,
-    limit?: number,
-    cursor?: number,
+    limit: number = 20,
+    cursor?: number
   ) {
-    return this.assessmentRepository.searchAssessments(
-      searchTerm,
-      createdBy,
-      riskCategory,
-      limit,
-      cursor,
-    );
+    return this.assessmentRepository.searchAssessments(searchTerm, createdBy, riskCategory, limit, cursor);
   }
-
-  async getAssessmentById(id: number) {
-    return this.assessmentRepository.getAssessmentById(id);
+  
+  async getAssessmentById(id: number, createdBy?: string) { 
+    return this.assessmentRepository.getAssessmentById(id, createdBy); 
   }
 
   async createAssessment(assessment: any) {
     return this.assessmentRepository.createAssessment(assessment);
   }
 
+  async updateClinicalNote(id: number, clinicalNote: string) {
+    return this.assessmentRepository.updateClinicalNote(id, clinicalNote);
+  }
+
   async deleteAssessment(id: number) {
     return this.assessmentRepository.deleteAssessment(id);
+  }
+
+  async createAssessmentsBatch(data: AssessmentCreateInput[]) {
+    return this.assessmentRepository.createAssessmentsBatch(data);
+  }
+
+  async getAssessmentNotes(assessmentId: number) {
+    return this.assessmentRepository.getNotes(assessmentId);
+  }
+
+  async addAssessmentNote(note: InsertAssessmentNote) {
+    return this.assessmentRepository.addNote(note);
   }
 
   async autocompletePatientNames(query: string, createdBy?: string, limit?: number) {
@@ -204,8 +219,8 @@ export class DatabaseStorage implements IStorage {
     return this.userRepository.updateUser(id, data);
   }
 
-  async getLoginAuditLogs(page: number, limit: number) {
-    return this.auditRepository.getLoginAuditLogs(page, limit);
+  async getLoginAuditLogs(page: number, limit: number, filters?: AuditLogFilters) {
+    return this.auditRepository.getLoginAuditLogs(page, limit, filters);
   }
 
   async recordLoginAudit(params: { userId?: string; ipAddress?: string; userAgent?: string; loginStatus: string; }): Promise<void> {
@@ -272,6 +287,10 @@ export class DatabaseStorage implements IStorage {
 
   async createPatientUser(data: InsertPatientUser): Promise<PatientUser> {
     return this.patientUserRepository.create(data);
+  }
+
+  async updatePatientEmailVerified(id: string, verified: boolean): Promise<PatientUser> {
+    return this.patientUserRepository.updateEmailVerified(id, verified);
   }
 
   async getAssessmentsByPatientName(patientName: string, limit?: number, offset?: number, createdBy?: string, startDate?: string, endDate?: string) {
