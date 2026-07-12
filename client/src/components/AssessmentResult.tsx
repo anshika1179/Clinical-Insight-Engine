@@ -23,7 +23,6 @@ import { CollaborativeNotes } from "./CollaborativeNotes";
 import { PathToImprovement } from "./assessment/PathToImprovement";
 import { Tooltip as UiTooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useTranslation } from "react-i18next";
 import i18next from "i18next";
 import { translatePatientAdvice } from "@/utils/adviceTranslator";
@@ -83,7 +82,6 @@ export function AssessmentResult({ assessment }: AssessmentResultProps) {
   const [whatIfFactors, setWhatIfFactors] = useState<{ name: string; impact: string; description: string }[] | null>(null);
   const [isEditingNote, setIsEditingNote] = useState(false);
   const [editNoteText, setEditNoteText] = useState("");
-  const [targetExportLanguage, setTargetExportLanguage] = useState(i18n.language || "en");
   const updateNoteMutation = useUpdateClinicalNote();
 
   const generatePDF = async () => {
@@ -103,7 +101,7 @@ export function AssessmentResult({ assessment }: AssessmentResultProps) {
     setPdfError("");
     setIsGeneratingPatientPDF(true);
     try {
-      const targetT = i18next.getFixedT(targetExportLanguage);
+      const targetT = i18next.getFixedT(i18n.language || "en");
       const localizedGuidance = translatePatientAdvice(patientGuidance, targetT);
       await downloadPatientHandoutPdf(assessment, factorBreakdown, localizedGuidance, targetT);
     } catch (error) {
@@ -288,30 +286,15 @@ export function AssessmentResult({ assessment }: AssessmentResultProps) {
                 {isGeneratingPDF ? t("patientResult.generating") : t("patientResult.exportOfficial")}
               </button>
             ) : (
-              <div className="flex items-center gap-2">
-                <Select value={targetExportLanguage} onValueChange={setTargetExportLanguage}>
-                  <SelectTrigger className="w-[120px] h-[42px] bg-card rounded-xl text-xs font-bold border-emerald-200">
-                    <SelectValue placeholder="Language" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="en">English</SelectItem>
-                    <SelectItem value="es">Español</SelectItem>
-                    <SelectItem value="fr">Français</SelectItem>
-                    <SelectItem value="zh">中文</SelectItem>
-                    <SelectItem value="ar">العربية</SelectItem>
-                    <SelectItem value="hi">हिंदी</SelectItem>
-                  </SelectContent>
-                </Select>
-                <button
-                  type="button"
-                  onClick={() => generatePatientPDF(factorBreakdown, patientGuidance)}
-                  disabled={isGeneratingPatientPDF}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold bg-emerald-600 border border-emerald-600 text-white hover:bg-emerald-700 shadow-sm transition-all duration-200 active:scale-[0.98] disabled:opacity-50"
-                >
-                  {isGeneratingPatientPDF ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
-                  {isGeneratingPatientPDF ? t("patientResult.generating") : (t("patientResult.exportPatientHandout") || "Download Patient PDF")}
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => generatePatientPDF(factorBreakdown, patientGuidance)}
+                disabled={isGeneratingPatientPDF}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold bg-emerald-600 border border-emerald-600 text-white hover:bg-emerald-700 shadow-sm transition-all duration-200 active:scale-[0.98] disabled:opacity-50"
+              >
+                {isGeneratingPatientPDF ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
+                {isGeneratingPatientPDF ? t("patientResult.generating") : (t("patientResult.exportPatientHandout") || "Download Patient PDF")}
+              </button>
             )}
             <UiTooltip>
               <TooltipTrigger asChild>
